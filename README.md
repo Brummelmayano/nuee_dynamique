@@ -110,10 +110,79 @@ Exemples fournis 📊
 - `examples/example_synthetic.py` — démonstrations sur données synthétiques (2D/3D) et comparaison avec `sklearn.cluster.KMeans`.
 - `examples/example_real.py` — exemples sur jeux réels (Iris, Wine), PCA et prédiction.
 
-```powershell
+Application interactive (Streamlit)
+---------------------------------
+
+Un démonstrateur interactif a été ajouté : `streamlit_app.py` (interface en français) qui permet de :
+
+- Choisir un jeu de données (Iris, Wine, Synthétique ou uploader un CSV).
+- Comparer `Nuées Dynamiques` et `K-Means` côte à côte.
+- Sélectionner la métrique, la méthode d'étalon, le nombre de clusters (slider ou saisie manuelle).
+- Visualiser en 2D/3D (projection PCA) et télécharger le jeu avec labels.
+
+Exécution locale
+-----------------
+
+1. Installez les dépendances (Streamlit et pandas sont inclus dans `requirements.txt`) :
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
 pip install -r requirements.txt
+```
+
+2. Lancez l'application Streamlit localement :
+
+```bash
+streamlit run streamlit_app.py
+```
+
+Utiliser l'application déployée
+-------------------------------
+
+L'application Streamlit a été déployée en ligne. Pour l'exploiter :
+
+1. Ouvrez l'URL fournie pour l'application (ex. `https://share.streamlit.io/<utilisateur>/<repo>/<chemin>`). Remplacez ceci par l'URL réelle de votre instance déployée.
+
+2. Interface générale :
+	- La barre latérale (gauche) contient tous les contrôles : choix de l'algorithme (`Nuées Dynamiques`, `K-Means` ou `Both`), métrique de distance, méthode d'étalon, jeu de données ou upload CSV, dimension de visualisation (2D/3D) et le nombre de clusters (slider ou saisie manuelle).
+	- Cliquez sur « Lancer le clustering » pour exécuter l'algorithme avec les paramètres choisis.
+
+3. Visualisation et interprétation :
+	- La visualisation utilise une projection PCA. Le titre affiche « PCA 2D (var: XX%) » ou « PCA 3D (var: XX%) » : `var` est le pourcentage de variance expliquée par les composantes principales affichées. Plus cette valeur est élevée, mieux la projection conserve l'information originale.
+	- En mode `Both`, les résultats ND et K-Means sont affichés côte à côte pour comparaison.
+	- Les centres sont étiquetés « Étalons » pour Nuées Dynamiques et « Centroïdes » pour K-Means.
+
+4. Upload CSV et format attendu :
+	- Le bouton d'upload accepte les fichiers CSV.
+	- L'application utilisera uniquement les colonnes numériques (toutes les colonnes non numériques seront ignorées).
+	- Le CSV peut contenir une ligne d'entête ; l'encodage UTF-8 est recommandé.
+	- Pour de meilleurs résultats, fournissez un jeu de caractéristiques normalisées ou standardisées si vos features ont des échelles très différentes.
+
+5. Télécharger les résultats :
+	- Après exécution, utilisez le bouton de téléchargement pour récupérer un CSV contenant les features originales, la colonne `cluster_<algorithme>` et (si disponible) `true_label`.
+
+6. Conseils performance et limites :
+	- L'application effectue des calculs côté serveur : pour de très grands jeux de données (dizaines de milliers d'échantillons), l'exécution peut être lente ou atteindre les limites de la plateforme hébergeant l'app.
+	- Si vous traitez de gros volumes, pré-traitez et réduisez la dimensionnalité (PCA) localement avant upload.
+
+7. Dépannage rapide :
+	- Pas de données affichées après upload : vérifiez que le CSV contient des colonnes numériques et qu'il n'est pas vide.
+	- Erreurs liées à scikit-learn ou threadpoolctl : assurez-vous d'utiliser les versions listées dans `requirements.txt` (notamment `scikit-learn>=1.2.2,<1.4` et `threadpoolctl>=3.1.0`).
+	- Si l'app renvoie une erreur inattendue, récupérez la trace d'erreur (console du serveur) et ouvrez une issue avec un exemple de CSV minimal.
+
+Si vous voulez, je peux ajouter dans le README le lien direct vers l'application déployée (badge ou URL) — fournissez simplement l'URL et je l'insère proprement.
+
+Tests rapides
+-------------
+
+Après installation, vous pouvez exécuter la suite de tests :
+
+```bash
 pytest -q
 ```
+
 
 Références
 ----------
