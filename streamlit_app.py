@@ -355,31 +355,13 @@ if run_button and 'X' in locals() and 'y_true' in locals():
     st.dataframe(df_preview.head(20))
 
 
-st.markdown("---")
-st.subheader("📦 Instructions de déploiement")
-st.markdown(
-    """
-Pour déployer cette application sur Streamlit Cloud :
-
-1. Poussez votre code sur GitHub (en incluant `streamlit_app.py`).
-2. Allez sur https://share.streamlit.io et connectez votre dépôt GitHub.
-3. Définissez le chemin du fichier principal à `streamlit_app.py` et déployez.
-
-Vous pouvez également l'exécuter localement :
-
-```bash
-pip install -r requirements.txt
-streamlit run streamlit_app.py
-```
-"""
-)
 
 st.markdown("---")
 st.markdown(
     "<div style='text-align: center; color: #888; font-size: 0.9em;'>"
     "<p><strong>Nuées Dynamiques - Démonstrateur Clustering Interactif</strong></p>"
     "<p>Université de Kinshasa</p>"
-    "<p>Réalisé par Duasenge Mayano</p>"
+    "<p>Réalisé par Duasenge Mayano Brummel</p>"
     "</div>",
     unsafe_allow_html=True
 )

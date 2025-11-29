@@ -143,7 +143,7 @@ Utiliser l'application déployée
 
 L'application Streamlit a été déployée en ligne. Pour l'exploiter :
 
-1. Ouvrez l'URL fournie pour l'application (ex. `https://share.streamlit.io/<utilisateur>/<repo>/<chemin>`). Remplacez ceci par l'URL réelle de votre instance déployée.
+1. Ouvrez l'URL fournie pour l'application (`https://nuees-dynamiques.streamlit.app/`). 
 
 2. Interface générale :
 	- La barre latérale (gauche) contient tous les contrôles : choix de l'algorithme (`Nuées Dynamiques`, `K-Means` ou `Both`), métrique de distance, méthode d'étalon, jeu de données ou upload CSV, dimension de visualisation (2D/3D) et le nombre de clusters (slider ou saisie manuelle).
@@ -169,10 +169,8 @@ L'application Streamlit a été déployée en ligne. Pour l'exploiter :
 
 7. Dépannage rapide :
 	- Pas de données affichées après upload : vérifiez que le CSV contient des colonnes numériques et qu'il n'est pas vide.
-	- Erreurs liées à scikit-learn ou threadpoolctl : assurez-vous d'utiliser les versions listées dans `requirements.txt` (notamment `scikit-learn>=1.2.2,<1.4` et `threadpoolctl>=3.1.0`).
-	- Si l'app renvoie une erreur inattendue, récupérez la trace d'erreur (console du serveur) et ouvrez une issue avec un exemple de CSV minimal.
+	- Erreurs liées à scikit-learn ou threadpoolctl : assurez-vous d'utiliser les versions listées dans `requirements.txt` 
 
-Si vous voulez, je peux ajouter dans le README le lien direct vers l'application déployée (badge ou URL) — fournissez simplement l'URL et je l'insère proprement.
 
 Tests rapides
 -------------

@@ -26,21 +26,21 @@ setup(
     long_description_content_type="text/markdown",
 
     # Lien vers le repository (à personnaliser si nécessaire)
-    url="https://github.com/votre-repo/nuees-dynamiques",
+    url="https://github.com/Brummelmayano/nuees_dynamiques/tree/main",
 
     # Découverte automatique des packages
     packages=find_packages(),
 
     # Métadonnées de classement
     classifiers=[
-        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.11",
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
     ],
 
     # Versions Python supportées
-    python_requires=">=3.8",
+    python_requires=">=3.11",
 
     # Dépendances
     install_requires=requirements,
