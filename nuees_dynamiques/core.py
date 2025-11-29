@@ -108,13 +108,6 @@ class NuéesDynamique:
         # Cache interne pour la dernière matrice de distances calculée
         self._last_distance_matrix = None
 
-        # Validation précoce de la métrique de distance pour éviter des erreurs tardives
-        try:
-            # Test simple : calculer la distance entre deux vecteurs nuls
-            compute_distance(np.zeros(1), np.zeros(1), metric=self.distance_metric)
-        except Exception as exc:
-            raise ValueError(f"Métrique de distance invalide ou non supportée : {self.distance_metric}") from exc
-
         # Instance RNG
         self._rng = np.random.RandomState(self.random_state)
 
@@ -140,7 +133,8 @@ class NuéesDynamique:
         n_samples, n_features = self.data.shape
         if self.init_method == "random":
             indices = self._rng.choice(n_samples, size=self.n_clusters, replace=False)
-            return self.data[indices].astype(float)
+            self.etallons_ = self.data[indices].astype(float)
+            return self.etallons_
 
         # kmeans++
         # Supporter la métrique configurée en utilisant compute_distance_matrix
@@ -172,7 +166,8 @@ class NuéesDynamique:
             else:
                 next_idx = self._rng.choice(n_samples, p=probs)
             centers[i] = self.data[next_idx]
-        return centers
+        self.etallons_ = centers
+        return self.etallons_
 
     def assign_objects(self) -> np.ndarray:
         """Assigne chaque observation au cluster le plus proche.
@@ -198,8 +193,8 @@ class NuéesDynamique:
         D = compute_distance_matrix(self.data, self.etallons_, metric=self.distance_metric)
         # Cacher la dernière matrice de distances pour réutilisation éventuelle
         self._last_distance_matrix = D
-        labels = np.argmin(D, axis=1)
-        return labels
+        self.labels_ = np.argmin(D, axis=1)
+        return self.labels_
 
     def update_etallons(self) -> np.ndarray:
         """Recalcule les étalons selon `etallon_method` pour chaque cluster.
@@ -259,7 +254,9 @@ class NuéesDynamique:
                 new_etallons[k] = cluster_points[medoid_idx]
         # Invalider le cache de distances car les étalons viennent de changer
         self._last_distance_matrix = None
-        return new_etallons
+        # Assigner les nouveaux étalons
+        self.etallons_ = new_etallons
+        return self.etallons_
 
     def check_convergence(self, old_etallons: np.ndarray) -> bool:
         """Vérifie la convergence en regardant le déplacement maximal des étalons.
@@ -268,11 +265,11 @@ class NuéesDynamique:
         -------
         bool
             True si la distance maximale entre anciens et nouveaux étalons est
-            inférieure à `self.tolerance`.
+            inférieure ou égale à `self.tolerance`.
         """
         shifts = np.linalg.norm(self.etallons_ - old_etallons, axis=1)
         max_shift = np.max(shifts)
-        return max_shift < self.tolerance
+        return bool(max_shift <= self.tolerance)
 
     def _compute_inertia(self) -> float:
         """Calcule l'inertie : somme des distances au carré des points à leur étalon.
@@ -306,11 +303,11 @@ class NuéesDynamique:
             self._rng = np.random.RandomState(self.random_state)
 
         # Initialisation
-        self.etallons_ = self.initialize_etallons()
+        self.initialize_etallons()
         self.history_ = []
         for it in range(self.max_iterations):
             # Assigner en premier et conserver la matrice de distances calculée
-            self.labels_ = self.assign_objects()
+            self.assign_objects()
 
             # Calculer l'inertie à partir de la matrice de distances mise en cache
             inertia = self._compute_inertia()
