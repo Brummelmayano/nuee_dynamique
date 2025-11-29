@@ -1,0 +1,44 @@
+# .gitignore pour projet Python
+
+# Fichiers Python compilés
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Environnements virtuels
+venv/
+env/
+ENV/
+.venv/
+
+# Distribution et packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# IDE et éditeurs
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Pytest et coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Fichiers temporaires
+*.log
+*.tmp
+*.bak
+
+# Données générées
+data/
+output/
