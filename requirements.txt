@@ -10,3 +10,10 @@ threadpoolctl>=3.1.0
 scipy>=1.7.0
 
 pytest>=7.0.0
+
+# Streamlit pour l'application interactive
+streamlit>=1.28.0
+
+# Pandas pour la manipulation de données et import CSV
+pandas>=2.0.0
+
