@@ -340,17 +340,252 @@ def prediction_example():
     print(f"    sans re-entraîner le modèle")
 
 
+def example_iris_multinoyau():
+    """
+    Exemple avancé : Iris avec noyaux multi-étalons (Diday IV.1).
+    
+    Cet exemple applique le mode multi-noyaux au dataset Iris pour montrer
+    comment les noyaux multi-étalons capturent mieux la structure interne
+    des classes dans des espaces multi-dimensionnels.
+    
+    Le dataset Iris contient 150 échantillons et 4 features. Avec ni=20,
+    chaque classe est représentée par un noyau de 20 points dans l'espace 4D.
+    """
+    print("\n" + "=" * 70)
+    print("EXEMPLE AVANCÉ : IRIS AVEC NOYAUX MULTI-ÉTALONS (DIDAY IV.1)")
+    print("=" * 70)
+
+    # Chargement du dataset
+    X, y_true = load_iris(return_X_y=True)
+    print(f"\n✓ Dataset Iris chargé : {X.shape[0]} échantillons, {X.shape[1]} features")
+    print(f"  - Classes réelles : {len(np.unique(y_true))} (setosa, versicolor, virginica)")
+
+    # Calcul du ni maximal possible
+    n_samples = X.shape[0]
+    n_clusters = 3
+    max_ni = max(1, n_samples // n_clusters)  # 150 // 3 = 50
+    ni_chosen = min(20, max_ni)  # min(20, 50) = 20
+
+    # --- Création du modèle multi-noyaux ---
+    nd = NuéesDynamique(
+        data=X,
+        n_clusters=n_clusters,
+        distance_metric='euclidean',
+        init_method='kmeans++',
+        etallon_method='centroid',
+        n_etalons_per_cluster=ni_chosen,  # Noyau multi-étalon (Diday IV.1)
+        max_iterations=100,
+        tolerance=1e-4,
+        random_state=42,
+    )
+
+    nd.fit()
+
+    print(f"\n✓ Clustering effectué (Nuées Dynamiques, noyaux multi-étalons) :")
+    print(f"  - Nombre d'étalons par classe (ni) : {ni_chosen}")
+    print(f"  - Forme des noyaux : {nd.etallons_.shape}")
+    print(f"    → {n_clusters} classes × {ni_chosen} étalons × {X.shape[1]} features")
+    print(f"  - Itérations : {nd.n_iter_}")
+    print(f"  - Inertie finale : {nd.get_inertia():.2f}")
+
+    # Calcul des métriques de qualité
+    silhouette = compute_silhouette(X, nd.labels_)
+    davies_bouldin = compute_davies_bouldin(X, nd.labels_)
+
+    print(f"\n✓ Métriques de qualité :")
+    print(f"  - Silhouette score : {silhouette:.3f}")
+    print(f"    → Score élevé (> 0.5) indique une bonne cohésion et séparation")
+    print(f"  - Davies-Bouldin index : {davies_bouldin:.3f}")
+    print(f"    → Indice faible suggère des clusters bien distincts")
+
+    # Visualisation en 2D via PCA
+    pca_2d = PCA(n_components=2)
+    X_pca_2d = pca_2d.fit_transform(X)
+
+    # Aplatir les noyaux multi-étalons pour l'affichage en 2D
+    flat_etallons = nd.etallons_.reshape(-1, nd.etallons_.shape[-1])
+    etallons_pca = pca_2d.transform(flat_etallons)
+
+    print(f"\n✓ Visualisation en 2D via PCA :")
+    print(f"  - Variance expliquée : {pca_2d.explained_variance_ratio_.sum():.1%}")
+    print(f"  - Note : PCA est utilisée UNIQUEMENT pour visualisation")
+    print(f"  - Le clustering est effectué sur les 4 features originales (espace réel)")
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    # Points de données colorés par classe
+    scatter = ax.scatter(X_pca_2d[:, 0], X_pca_2d[:, 1], c=nd.labels_, cmap='viridis', alpha=0.6, s=50)
+
+    # Noyaux multi-étalons (affichés sous forme d'étoiles rouges)
+    ax.scatter(
+        etallons_pca[:, 0],
+        etallons_pca[:, 1],
+        c='red',
+        marker='*',
+        s=150,
+        edgecolors='black',
+        linewidths=1,
+        label=f'Noyaux multi-étalons (ni={ni_chosen})',
+        alpha=0.8,
+    )
+
+    ax.set_title(
+        f"Iris - Noyaux Multi-Étalons (Diday IV.1)\n"
+        f"PCA 2D (var={pca_2d.explained_variance_ratio_.sum():.1%}) | "
+        f"Silhouette={silhouette:.3f} | DB={davies_bouldin:.3f}"
+    )
+    ax.set_xlabel(f"PC1 ({pca_2d.explained_variance_ratio_[0]:.1%})")
+    ax.set_ylabel(f"PC2 ({pca_2d.explained_variance_ratio_[1]:.1%})")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+    print(f"\n✓ Interprétation :")
+    print(f"  - L'intérêt des noyaux multi-étalons devient visible en 4D :")
+    print(f"    Avec ni=1 (prototype unique), chaque classe est réduite à son centroïde.")
+    print(f"    Avec ni={ni_chosen}, chaque classe est décrite par {ni_chosen} points qui")
+    print(f"    capturent la structure et l'étendue interne de la classe dans l'espace 4D.")
+    print(f"  - Cela permet une meilleure compréhension géométrique des classes")
+    print(f"  - et une représentation plus fidèle pour la prédiction et l'analyse.")
+    print(f"  - Conformément à Diday (1971, IV.1), ce mode est particulièrement utile")
+    print(f"    pour les clusters de formes complexes ou allongées.")
+
+
+def example_wine_multinoyau_3d():
+    """
+    Exemple avancé : Wine avec noyaux multi-étalons en visualisation 3D.
+    
+    Cet exemple applique le mode multi-noyaux au dataset Wine pour démontrer
+    comment les noyaux multi-étalons fonctionnent sur des données réelles
+    haute-dimension (13D) avec visualisation PCA 3D interactive.
+    
+    Le dataset Wine contient 178 échantillons et 13 features. Avec ni=15,
+    chaque classe est représentée par un noyau de 15 points dans l'espace 13D,
+    projeté en 3D pour visualisation.
+    """
+    print("\n" + "=" * 70)
+    print("EXEMPLE AVANCÉ : WINE AVEC NOYAUX MULTI-ÉTALONS EN 3D (DIDAY IV.1)")
+    print("=" * 70)
+
+    # Chargement du dataset
+    X, y_true = load_wine(return_X_y=True)
+    print(f"\n✓ Dataset Wine chargé : {X.shape[0]} échantillons, {X.shape[1]} features")
+    print(f"  - Classes réelles : {len(np.unique(y_true))} cultivars de vin")
+    print(f"  - Features : alcool, acide malique, etc. (composition chimique)")
+
+    # Calcul du ni maximal possible
+    n_samples = X.shape[0]
+    n_clusters = 3
+    max_ni = max(1, n_samples // n_clusters)  # 178 // 3 = 59
+    ni_chosen = 15  # Choisi comme demandé
+
+    # --- Création du modèle multi-noyaux ---
+    nd = NuéesDynamique(
+        data=X,
+        n_clusters=n_clusters,
+        n_etalons_per_cluster=ni_chosen,  # Noyau multi-étalon (Diday IV.1)
+        distance_metric='euclidean',
+        init_method='random',
+        etallon_method='centroid',
+        max_iterations=100,
+        tolerance=1e-4,
+        random_state=42,
+    )
+
+    nd.fit()
+
+    print(f"\n✓ Clustering effectué (Nuées Dynamiques, noyaux multi-étalons) :")
+    print(f"  - Nombre d'étalons par classe (ni) : {ni_chosen}")
+    print(f"  - Forme des noyaux : {nd.etallons_.shape}")
+    print(f"    → {n_clusters} classes × {ni_chosen} étalons × {X.shape[1]} features")
+    print(f"  - Itérations : {nd.n_iter_}")
+    print(f"  - Inertie finale : {nd.get_inertia():.2f}")
+
+    # Calcul des métriques de qualité
+    silhouette = compute_silhouette(X, nd.labels_)
+    davies_bouldin = compute_davies_bouldin(X, nd.labels_)
+
+    print(f"\n✓ Métriques de qualité :")
+    print(f"  - Silhouette score : {silhouette:.3f}")
+    print(f"    → Score modéré reflète la complexité des données réelles haute-dim")
+    print(f"  - Davies-Bouldin index : {davies_bouldin:.3f}")
+    print(f"    → Indice suggère des clusters avec chevauchement partiel")
+
+    # Visualisation en 3D via PCA
+    pca_3d = PCA(n_components=3)
+    X_pca_3d = pca_3d.fit_transform(X)
+
+    # Aplatir les noyaux multi-étalons pour l'affichage en 3D
+    flat_etallons = nd.etallons_.reshape(-1, nd.etallons_.shape[-1])
+    etallons_pca = pca_3d.transform(flat_etallons)
+
+    print(f"\n✓ Visualisation en 3D via PCA :")
+    print(f"  - Variance expliquée : {pca_3d.explained_variance_ratio_.sum():.1%}")
+    print(f"  - Note : PCA réduit les 13 dimensions à 3 pour visualisation")
+    print(f"  - Le clustering est effectué sur les 13 features originales (espace réel)")
+
+    # Plot 3D avec matplotlib
+    from mpl_toolkits.mplot3d import Axes3D
+    fig = plt.figure(figsize=(12, 9))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Points de données colorés par classe
+    scatter = ax.scatter(X_pca_3d[:, 0], X_pca_3d[:, 1], X_pca_3d[:, 2], c=nd.labels_, cmap='viridis', alpha=0.6, s=50)
+
+    # Noyaux multi-étalons (affichés sous forme d'étoiles rouges)
+    ax.scatter(
+        etallons_pca[:, 0],
+        etallons_pca[:, 1],
+        etallons_pca[:, 2],
+        c='red',
+        marker='*',
+        s=150,
+        edgecolors='black',
+        linewidths=1,
+        label=f'Noyaux multi-étalons (ni={ni_chosen})',
+        alpha=0.8,
+    )
+
+    ax.set_title(
+        f"Wine - Noyaux Multi-Étalons 3D (Diday IV.1)\n"
+        f"PCA 3D (var={pca_3d.explained_variance_ratio_.sum():.1%}) | "
+        f"Silhouette={silhouette:.3f} | DB={davies_bouldin:.3f}"
+    )
+    ax.set_xlabel(f"PC1 ({pca_3d.explained_variance_ratio_[0]:.1%})")
+    ax.set_ylabel(f"PC2 ({pca_3d.explained_variance_ratio_[1]:.1%})")
+    ax.set_zlabel(f"PC3 ({pca_3d.explained_variance_ratio_[2]:.1%})")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+    print(f"\n✓ Interprétation :")
+    print(f"  - Test multi-noyaux sur données réelles haute-dimension (13D→3D PCA) :")
+    print(f"    Avec ni={ni_chosen}, chaque classe est décrite par {ni_chosen} points qui")
+    print(f"    capturent la structure interne dans l'espace 13D des compositions chimiques.")
+    print(f"  - La visualisation 3D permet une exploration interactive (rotation) pour")
+    print(f"    comprendre la séparation des cultivars de vin dans un espace réduit.")
+    print(f"  - Cela démontre la flexibilité de Nuées Dynamiques pour des données complexes,")
+    print(f"    où les noyaux multi-étalons offrent une représentation plus riche que les prototypes uniques.")
+
+
 if __name__ == "__main__":
     print("\n" + "=" * 70)
     print("DÉMONSTRATION DE LA MÉTHODE DES NUÉES DYNAMIQUES")
     print("Application à des datasets réels avec évaluation quantitative")
     print("=" * 70)
 
-    # Exécuter les quatre exemples
+    # Exécuter les exemples
     example_iris_dataset()
     example_wine_dataset()
     comparative_analysis()
     prediction_example()
+    example_iris_multinoyau()  # Nouvel exemple
+    example_wine_multinoyau_3d()  # Nouvel exemple
 
     print("\n" + "=" * 70)
     print("Démonstration terminée !")
