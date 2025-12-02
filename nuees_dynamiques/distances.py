@@ -173,6 +173,26 @@ def chebyshev_distance(x, y):
     # 3.0
 
 
+def chi2_distance(x, y):
+    """Calcule la distance χ² (chi-carré) entre deux vecteurs. Formula : sum((x_i - y_i)^2 / (x_i + y_i + eps)). Sensible aux valeurs négatives."""
+    x_arr, y_arr = _validate_input(x, y)
+    num = (x_arr - y_arr) ** 2
+    den = x_arr + y_arr + 1e-12
+    return float(np.sum(num / den))
+
+
+def sebestyen_distance(x, y):
+    """Calcule la distance de Sebestyén (divergence KL symétrique) entre deux vecteurs. Formula : 0.5 * (KL(x||y) + KL(y||x)) où KL est la divergence de Kullback-Leibler. Les vecteurs sont normalisés en distributions de probabilité."""
+    x_arr, y_arr = _validate_input(x, y)
+    x_abs = np.abs(x_arr) + 1e-12
+    y_abs = np.abs(y_arr) + 1e-12
+    x_norm = x_abs / x_abs.sum()
+    y_norm = y_abs / y_abs.sum()
+    kl_xy = np.sum(x_norm * np.log(x_norm / y_norm + 1e-12))
+    kl_yx = np.sum(y_norm * np.log(y_norm / x_norm + 1e-12))
+    return float(0.5 * (kl_xy + kl_yx))
+
+
 def compute_distance(x, y, metric: str = "euclidean", **kwargs):
     """Fonction générique pour calculer la distance selon une métrique choisie.
 
@@ -204,6 +224,8 @@ def compute_distance(x, y, metric: str = "euclidean", **kwargs):
         "minkowski": minkowski_distance,
         "chebyshev": chebyshev_distance,
         "linf": chebyshev_distance,
+        "chi2": chi2_distance,
+        "sebestyen": sebestyen_distance,
     }
     if metric not in dispatch:
         raise ValueError(f"Métrique inconnue '{metric}'. Métriques supportées : {list(dispatch.keys())}")
@@ -267,6 +289,23 @@ def compute_distance_matrix(X: np.ndarray, centroids: np.ndarray, metric: str = 
         diff = np.abs(X_arr[:, np.newaxis, :] - C_arr[np.newaxis, :, :])
         return np.max(diff, axis=2)
 
+    if metric == "chi2":
+        # Broadcasting vectorisé : (n_samples, 1, n_features) - (1, n_centroids, n_features)
+        diff = X_arr[:, np.newaxis, :] - C_arr[np.newaxis, :, :]
+        num = diff ** 2
+        den = X_arr[:, np.newaxis, :] + C_arr[np.newaxis, :, :] + 1e-12
+        return np.sum(num / den, axis=2)
+
+    if metric == "sebestyen":
+        # Boucle sur centroids (n_clusters petit, acceptable)
+        n_samples = X_arr.shape[0]
+        n_centroids = C_arr.shape[0]
+        D = np.empty((n_samples, n_centroids), dtype=float)
+        for j in range(n_centroids):
+            for i in range(n_samples):
+                D[i, j] = sebestyen_distance(X_arr[i], C_arr[j])
+        return D
+
     # Pour minkowski ou métriques personnalisées
     if metric == "minkowski":
         p = kwargs.get("p", 2.0)
@@ -313,7 +352,7 @@ def pairwise_distances(X: np.ndarray, metric: str = "euclidean", **kwargs) -> np
         raise ValueError("X doit être un tableau 2D (n_samples, n_features)")
 
     metric = metric.lower()
-    if _HAS_SCIPY:
+    if _HAS_SCIPY and metric in ("euclidean", "l2", "manhattan", "l1", "chebyshev", "linf", "minkowski"):
         # mapping des noms pour scipy si nécessaire
         scipy_metric = metric
         if metric in ("euclidean", "l2"):
@@ -362,6 +401,21 @@ def pairwise_distances(X: np.ndarray, metric: str = "euclidean", **kwargs) -> np
             return np.max(diff, axis=2)
         return np.sum(np.abs(X_arr[:, np.newaxis, :] - X_arr[np.newaxis, :, :]) ** p, axis=2) ** (1.0 / p)
 
+    if metric == "chi2":
+        diff = X_arr[:, np.newaxis, :] - X_arr[np.newaxis, :, :]
+        num = diff ** 2
+        den = X_arr[:, np.newaxis, :] + X_arr[np.newaxis, :, :] + 1e-12
+        return np.sum(num / den, axis=2)
+
+    if metric == "sebestyen":
+        n = X_arr.shape[0]
+        D = np.zeros((n, n), dtype=float)
+        for i in range(n):
+            for j in range(i + 1, n):
+                d = sebestyen_distance(X_arr[i], X_arr[j])
+                D[i, j] = D[j, i] = d
+        return D
+
     # Cas général : utiliser compute_distance de façon pairwise
     n = X_arr.shape[0]
     D = np.zeros((n, n), dtype=float)
@@ -379,6 +433,8 @@ __all__ = [
     "manhattan_distance",
     "minkowski_distance",
     "chebyshev_distance",
+    "chi2_distance",
+    "sebestyen_distance",
     "compute_distance",
     "compute_distance_matrix",
     "pairwise_distances",
