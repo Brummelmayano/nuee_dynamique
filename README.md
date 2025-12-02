@@ -106,6 +106,63 @@ labels_new = nd.predict(X_new)
 print('Predictions:', labels_new)
 ```
 
+Noyaux Multi-Étalons (Diday 1971, section IV.1) 🎯
+---------------------------------------------------
+
+Diday a proposé dans la section IV.1 de son article une extension permettant à chaque cluster d'être représenté non pas par un seul étalon, mais par un **noyau de plusieurs étalons** (`ni = card(Ei)`). Cette généralisation permet de capturer des structures de clusters plus complexes, notamment les formes allongées ou irrégulières.
+
+### Algorithme IV.1 – Entrées et sorties
+
+**Entrées :**
+- `data` : jeu de données à partitionner (n_samples, n_features).
+- `K` : nombre de classes/clusters.
+- `ni` : nombre d'étalons par classe (cardinal de chaque noyau Ei).
+- Optionnel : initialisation des noyaux Ei (ou choix aléatoire/kmeans++).
+
+**Sorties :**
+- `C1, C2, ..., CK` : partition finale en K classes.
+- `E1, E2, ..., EK` : noyaux finaux (chaque Ei contient ni points).
+- Mesure d'homogénéité globale (inertie, silhouette, Davies-Bouldin).
+- Mesure locale par classe (en option).
+
+### Exemple de code – Mode multi-noyaux
+
+Pour utiliser le mode multi-noyaux, il suffit de passer le paramètre `n_etalons_per_cluster` :
+
+```python
+import numpy as np
+from nuees_dynamiques import NuéesDynamique
+
+# Jeu de données avec clusters allongés
+X = np.random.RandomState(0).randn(300, 2)
+
+# Mode multi-noyaux (Diday IV.1)
+nd = NuéesDynamique(
+    data=X,
+    n_clusters=2,
+    n_etalons_per_cluster=40,  # 40 étalons par cluster (au lieu de 1)
+    etallon_method='centroid',
+    random_state=0
+)
+nd.fit()
+
+# Résultat : etallons_ est maintenant de forme (2, 40, 2)
+print(f"Forme des noyaux : {nd.etallons_.shape}")
+# Sortie : Forme des noyaux : (2, 40, 2)
+
+# Chaque cluster est représenté par un noyau de 40 points
+print(f"Noyau du cluster 0 : {nd.etallons_[0].shape}")  # (40, 2)
+```
+
+### Avantages du mode multi-noyaux
+
+- **Clusters allongés** : Un seul étalon ne peut pas bien représenter un cluster de forme elliptique. Plusieurs étalons, disposés le long de l'allongement, offrent une meilleure approximation.
+- **Structures irrégulières** : Pour des clusters non-convexes, un noyau multi-étalon peut s'adapter à la géométrie locale.
+- **Robustesse** : L'ensemble de points dans le noyau fournit une caractérisation plus riche qu'un centroïde unique.
+- **Exemple article** : Dans l'article de Diday (1971, IV.1), des expériences sur 283 ou 180 points montrent que ~40 étalons par classe capturent bien les structures des partitions.
+
+**Note** : Le mode multi-noyaux est complètement transparent ; assignation et prédiction fonctionnent de la même façon qu'avec `ni=1`.
+
 Exemples fournis 📊
 - `examples/example_synthetic.py` — démonstrations sur données synthétiques (2D/3D) et comparaison avec `sklearn.cluster.KMeans`.
 - `examples/example_real.py` — exemples sur jeux réels (Iris, Wine), PCA et prédiction.
