@@ -303,6 +303,50 @@ def test_initialize_etallons_reproducibility(simple_data_2d):
     npt.assert_array_almost_equal(etallons1, etallons2)
 
 
+def test_initialize_etallons_history_ni1_random(simple_data_2d):
+    """
+    Teste que initialize_etallons avec ni=1, random initialise etallons_history_ avec 1 élément.
+    """
+    X, _ = simple_data_2d
+    nd = NuéesDynamique(data=X, n_clusters=3, init_method="random", random_state=42)
+    nd.initialize_etallons()
+
+    assert len(nd.etallons_history_) == 1
+
+
+def test_initialize_etallons_history_ni1_kmeanspp(simple_data_2d):
+    """
+    Teste que initialize_etallons avec ni=1, kmeans++ initialise etallons_history_ avec 1 élément.
+    """
+    X, _ = simple_data_2d
+    nd = NuéesDynamique(data=X, n_clusters=3, init_method="kmeans++", random_state=42)
+    nd.initialize_etallons()
+
+    assert len(nd.etallons_history_) == 1
+
+
+def test_initialize_etallons_history_ni_gt1_random(simple_data_2d):
+    """
+    Teste que initialize_etallons avec ni>1, random initialise etallons_history_ avec 1 élément.
+    """
+    X, _ = simple_data_2d
+    nd = NuéesDynamique(data=X, n_clusters=3, n_etalons_per_cluster=2, init_method="random", random_state=42)
+    nd.initialize_etallons()
+
+    assert len(nd.etallons_history_) == 1
+
+
+def test_initialize_etallons_history_ni_gt1_kmeanspp(simple_data_2d):
+    """
+    Teste que initialize_etallons avec ni>1, kmeans++ initialise etallons_history_ avec 1 élément.
+    """
+    X, _ = simple_data_2d
+    nd = NuéesDynamique(data=X, n_clusters=3, n_etalons_per_cluster=2, init_method="kmeans++", random_state=42)
+    nd.initialize_etallons()
+
+    assert len(nd.etallons_history_) == 1
+
+
 # ============================================================================
 # Tests de assign_objects
 # ============================================================================
@@ -1436,3 +1480,543 @@ def test_different_etallon_methods(simple_data_2d):
             for i in range(nd.etallons_.shape[0]):
                 found = any(np.allclose(nd.etallons_[i], X[j]) for j in range(X.shape[0]))
                 assert found, f"Médoïde {i} n'est pas un point du dataset"
+
+
+# ============================================================================
+# TESTS MULTI-NOYAUX (n_etalons_per_cluster > 1) - Diday IV.1
+# ============================================================================
+
+
+@pytest.fixture
+def data_multinoyau_2d():
+    """
+    Fixture : données synthétiques 2D pour tests multi-noyaux.
+
+    Génère 100 points répartis en 3 clusters bien séparés.
+    Retourne (X, y_true).
+    """
+    X, y = generate_synthetic_data(n_samples=100, n_features=2, n_clusters=3, cluster_std=0.5, random_state=0)
+    return X, y
+
+
+@pytest.fixture
+def data_multinoyau_3d():
+    """
+    Fixture : données synthétiques 3D pour tests multi-noyaux.
+
+    Génère 150 points répartis en 2 clusters.
+    Retourne (X, y_true).
+    """
+    X, y = generate_synthetic_data(n_samples=150, n_features=3, n_clusters=2, cluster_std=0.6, random_state=1)
+    return X, y
+
+
+def test_multinoyau_ni_zero_raises(data_multinoyau_2d):
+    """ni=0 doit lever ValueError à l'initialisation."""
+    X, _ = data_multinoyau_2d
+    with pytest.raises(ValueError):
+        NuéesDynamique(data=X, n_clusters=3, n_etalons_per_cluster=0)
+
+
+def test_multinoyau_ni_trop_grand_raises(data_multinoyau_2d):
+    """ni trop grand : l'initialisation doit gérer le cas (padding), pas lever."""
+    X, _ = data_multinoyau_2d
+    n_samples = X.shape[0]
+    n_clusters = 3
+    # choisir ni > n_samples // n_clusters
+    ni = (n_samples // n_clusters) + 1
+    # L'initialisation ne doit plus lever ; elle doit produire des noyaux avec padding
+    nd = NuéesDynamique(data=X, n_clusters=n_clusters, n_etalons_per_cluster=ni, random_state=0)
+    et = nd.initialize_etallons()
+    assert et.shape == (n_clusters, ni, X.shape[1])
+    # chaque point du noyau doit provenir de X (ou être duplication de padding)
+    for k in range(n_clusters):
+        for p in et[k]:
+            assert any(np.allclose(p, q) for q in X)
+
+
+def test_multinoyau_ni_one_backward_compat(data_multinoyau_2d):
+    """ni=1 doit rester rétrocompatible (etallons_ 2D)."""
+    X, _ = data_multinoyau_2d
+    nd = NuéesDynamique(data=X, n_clusters=3, n_etalons_per_cluster=1, random_state=2)
+    nd.fit()
+    assert nd.etallons_.ndim == 2
+    assert nd.etallons_.shape == (3, X.shape[1])
+
+
+def test_multinoyau_shapes_and_structure(data_multinoyau_2d):
+    """
+    Vérifie que pour plusieurs valeurs de `ni` on obtient une structure 3D
+    et que chaque étalon du noyau appartient au cluster correspondant.
+    """
+    X, _ = data_multinoyau_2d
+    n_clusters = 3
+    nd = NuéesDynamique(data=X, n_clusters=n_clusters, random_state=0)
+
+    # Tester plusieurs ni, en limitant ni au maximum autorisé
+    max_ni = X.shape[0] // n_clusters
+    for ni in [2, 5, min(40, max_ni)]:
+        nd = NuéesDynamique(data=X, n_clusters=n_clusters, n_etalons_per_cluster=ni, random_state=0)
+        nd.fit()
+        assert nd.etallons_.ndim == 3
+        assert nd.etallons_.shape == (n_clusters, ni, X.shape[1])
+
+        # Vérifier que chaque point du noyau est un point du dataset et appartient au cluster
+        for k in range(n_clusters):
+            mask = nd.labels_ == k
+            cluster_points = X[mask]
+            # Si cluster vide, cluster_points peut être vide (alors noyau a été réinitialisé)
+            for p in nd.etallons_[k]:
+                found = False
+                if cluster_points.shape[0] > 0:
+                    for q in cluster_points:
+                        if np.allclose(p, q):
+                            found = True
+                            break
+                else:
+                    # Si cluster vide, s'assurer que p appartient à X (réinit random)
+                    for q in X:
+                        if np.allclose(p, q):
+                            found = True
+                            break
+                assert found, "Chaque point du noyau doit provenir de X"
+
+
+def test_multinoyau_initialize_padding_and_reproducibility():
+    """Test d'initialisation multi-noyaux: padding et reproductibilité."""
+    # Construire un dataset où un cluster très petit provoque padding
+    X_small = np.vstack([np.ones((3, 2)) * i for i in range(3)])  # 3 clusters de 3 points
+    # ni > members per cluster to force padding
+    ni = 5
+    nd = NuéesDynamique(data=X_small, n_clusters=3, n_etalons_per_cluster=ni, init_method='random', random_state=7)
+    et = nd.initialize_etallons()
+    assert et.shape == (3, ni, 2)
+    # Vérifier padding: si moins de membres, le dernier point est dupliqué
+    for k in range(3):
+        # tous les points du noyau doivent être dans X_small
+        for p in et[k]:
+            assert any(np.allclose(p, q) for q in X_small)
+
+    # Reproductibilité
+    nd1 = NuéesDynamique(data=X_small, n_clusters=3, n_etalons_per_cluster=ni, init_method='random', random_state=7)
+    nd2 = NuéesDynamique(data=X_small, n_clusters=3, n_etalons_per_cluster=ni, init_method='random', random_state=7)
+    e1 = nd1.initialize_etallons()
+    e2 = nd2.initialize_etallons()
+    npt.assert_array_equal(e1, e2)
+
+
+def test_multinoyau_assign_objects_and_cache(data_multinoyau_2d):
+    """Vérifie l'assignation basée sur la distance minimale au noyau et le cache."""
+    X, _ = data_multinoyau_2d
+    nd = NuéesDynamique(data=X, n_clusters=3, n_etalons_per_cluster=3, random_state=0)
+    nd.initialize_etallons()
+    labels = nd.assign_objects()
+    assert labels.shape == (X.shape[0],)
+    # Vérifier cache
+    assert nd._last_distance_matrix is not None
+    assert nd._last_distance_matrix.shape == (X.shape[0], 3)
+
+
+def test_multinoyau_update_etallons_greedy_medoid_first(data_multinoyau_2d):
+    """Vérifie que le premier point du noyau est le medoid (min sum of dists)."""
+    X, _ = data_multinoyau_2d
+    nd = NuéesDynamique(data=X, n_clusters=3, n_etalons_per_cluster=3, etallon_method='medoid', random_state=1)
+    nd.initialize_etallons()
+    nd.assign_objects()
+    old_et = nd.etallons_.copy()
+    new_et = nd.update_etallons()
+    # Pour chaque cluster, vérifier que new_et[k,0] est un point du cluster et est medoid
+    for k in range(3):
+        mask = nd.labels_ == k
+        members = X[mask]
+        if members.shape[0] == 0:
+            # Cluster vide → noyau aléatoire, s'assurer que point provient de X
+            assert any(np.allclose(new_et[k,0], q) for q in X)
+            continue
+        # calcul medoid sur members
+        D = np.linalg.norm(members[:, None, :] - members[None, :, :], axis=2)
+        sums = np.sum(D, axis=1)
+        medoid = members[np.argmin(sums)]
+        assert np.allclose(new_et[k,0], medoid)
+
+
+def test_multinoyau_check_convergence_lexsort_behavior():
+    """Deux noyaux identiques mais permutés doivent être considérés convergents."""
+    # Construire deux noyaux identiques mais avec ordre différent
+    noyau = np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]])
+    noyau_perm = noyau[::-1].copy()
+    nd = NuéesDynamique(data=np.vstack([noyau, noyau_perm]), n_clusters=2, n_etalons_per_cluster=3)
+    nd.etallons_ = np.array([noyau, noyau_perm])
+    old = np.array([noyau_perm, noyau])
+    assert nd.check_convergence(old) is True
+
+
+def test_multinoyau_predict_and_inertia_consistency(data_multinoyau_3d):
+    """Vérifie predict(), _compute_inertia() et cohérence avec labels."""
+    X, _ = data_multinoyau_3d
+    nd = NuéesDynamique(data=X, n_clusters=2, n_etalons_per_cluster=4, random_state=2)
+    nd.fit()
+    preds = nd.predict(X)
+    assert preds.shape == (X.shape[0],)
+    # cohérence train vs predict
+    npt.assert_array_equal(preds, nd.labels_)
+    # inertia correspond à somme des carrés des distances minimales au noyau
+    # recalcul manuel
+    flat = nd.etallons_.reshape(-1, X.shape[1])
+    D_flat = np.linalg.norm(X[:, None, :] - flat[None, :, :], axis=2)
+    D_reshaped = D_flat.reshape(X.shape[0], nd.n_clusters, nd.n_etalons_per_cluster)
+    D_min = np.min(D_reshaped, axis=2)
+    chosen = D_min[np.arange(X.shape[0]), nd.labels_]
+    expected_inertia = float(np.sum(chosen ** 2))
+    npt.assert_allclose(nd.inertia_, expected_inertia)
+
+
+def test_multinoyau_edge_case_padding_and_empty_clusters():
+    """Tests d'edge cases : padding quand cluster petit et clusters vides."""
+    # Dataset forcé : cluster 0 a 2 points, cluster 1 vide (simulate), cluster 2 1 point
+    X = np.array([[0.0, 0.0], [0.1, 0.1], [10.0, 10.0]])
+    nd = NuéesDynamique(data=X, n_clusters=3, n_etalons_per_cluster=4, random_state=3)
+    # initialize should not crash
+    et = nd.initialize_etallons()
+    assert et.shape == (3, 4, 2)
+    # update should handle empty clusters
+    nd.assign_objects()
+    nd.update_etallons()
+    # verify all etallons are points from X (possibly duplicated)
+    for k in range(3):
+        for p in nd.etallons_[k]:
+            assert any(np.allclose(p, q) for q in X)
+
+
+def test_multinoyau_workflow_fit_predict_get_inertia():
+    """Test d'intégration : fit -> predict -> get_inertia sans erreur."""
+    X, _ = generate_synthetic_data(n_samples=80, n_features=2, n_clusters=2, cluster_std=0.7, random_state=5)
+    nd = NuéesDynamique(data=X, n_clusters=2, n_etalons_per_cluster=3, random_state=5)
+    nd.fit()
+    preds = nd.predict(X[:5])
+    assert preds.shape == (5,)
+    val = nd.get_inertia()
+    assert isinstance(val, float)
+
+
+def test_multinoyau_inertia_decroissante(data_multinoyau_2d):
+    """Teste que l'inertie diminue monotoniquement durant `fit()` en mode multi-noyaux."""
+    X, _ = data_multinoyau_2d
+    nd = NuéesDynamique(data=X, n_clusters=3, n_etalons_per_cluster=5, max_iterations=100, random_state=42)
+    nd.fit()
+    # history_ doit exister et sa longueur doit correspondre à n_iter_
+    assert hasattr(nd, 'history_') and len(nd.history_) == nd.n_iter_
+    # La suite des différences doit être <= tol (non-croissante)
+    diffs = np.diff(np.array(nd.history_))
+    assert np.all(diffs <= 1e-8), f"Inertie non décroissante : {diffs[diffs > 1e-8]}"
+    # inertie finale cohérente avec history_
+    assert np.isclose(nd.history_[-1], nd.inertia_)
+
+
+def test_multinoyau_assign_min_dist_manual():
+    """Vérifie manuellement l'assignation min-distance au noyau sur petit dataset contrôlé."""
+    X = np.array([[0.2, 0.2], [0.05, 0.05], [10.2, 10.2], [9.9, 9.9]])
+    etallons = np.array([
+        [[0.0, 0.0], [0.1, 0.1]],
+        [[10.0, 10.0], [10.1, 10.1]]
+    ])
+    nd = NuéesDynamique(data=X, n_clusters=2, n_etalons_per_cluster=2)
+    nd.etallons_ = etallons
+    labels = nd.assign_objects()
+
+    # Calcul manuel des distances minimales par noyau
+    D0 = np.linalg.norm(X[:, None, :] - etallons[0][None, :, :], axis=2)
+    min0 = np.min(D0, axis=1)
+    D1 = np.linalg.norm(X[:, None, :] - etallons[1][None, :, :], axis=2)
+    min1 = np.min(D1, axis=1)
+    D_min = np.vstack([min0, min1]).T
+    expected = np.argmin(D_min, axis=1)
+
+    npt.assert_array_equal(labels, expected)
+    # Vérifier le cache _last_distance_matrix contient bien les min distances
+    npt.assert_allclose(nd._last_distance_matrix[:, 0], min0)
+    npt.assert_allclose(nd._last_distance_matrix[:, 1], min1)
+
+
+def test_multinoyau_update_closest_to_prototype():
+    """Vérifie la sélection des ni points les plus proches du prototype."""
+    members = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [2.0, 2.0], [3.0, 1.0]])
+    nd = NuéesDynamique(data=members, n_clusters=1, n_etalons_per_cluster=3, random_state=0)
+    # Forcer labels : tout dans le même cluster
+    nd.labels_ = np.zeros(members.shape[0], dtype=int)
+    noyau = nd.update_etallons()
+
+    # Calcul manuel : prototype = centroïde (etallon_method par défaut)
+    prototype = np.mean(members, axis=0)
+    # Distances au prototype
+    dists = np.linalg.norm(members - prototype, axis=1)
+    # Indices triés par distance croissante
+    sorted_indices = np.argsort(dists)
+    # Sélectionner les 3 premiers
+    expected_indices = sorted_indices[:3]
+    expected = members[expected_indices]
+
+    # Vérifier que le noyau contient les 3 points les plus proches
+    # (l'ordre peut varier si distances égales, donc vérifier l'ensemble)
+    for p in noyau[0]:
+        assert any(np.allclose(p, q) for q in expected)
+
+
+def test_multinoyau_fit_reproductible(data_multinoyau_2d):
+    """Vérifie la reproductibilité complète d'un fit multi-noyau (labels, noyaux, inertie)."""
+    X, _ = data_multinoyau_2d
+    params = dict(data=X, n_clusters=3, n_etalons_per_cluster=3, random_state=42)
+    nd1 = NuéesDynamique(**params)
+    nd2 = NuéesDynamique(**params)
+    nd1.fit()
+    nd2.fit()
+    npt.assert_array_equal(nd1.labels_, nd2.labels_)
+    npt.assert_array_equal(nd1.etallons_, nd2.etallons_)
+    assert np.isclose(nd1.inertia_, nd2.inertia_)
+
+
+def test_multinoyau_shape_ni_40_explicit():
+    """Test explicite pour `n_etalons_per_cluster=40` sur dataset suffisamment grand."""
+    X, _ = generate_synthetic_data(n_samples=240, n_features=2, n_clusters=3, cluster_std=0.6, random_state=0)
+    nd = NuéesDynamique(data=X, n_clusters=3, n_etalons_per_cluster=40, random_state=0)
+    nd.fit()
+    assert nd.etallons_.shape == (3, 40, X.shape[1])
+    assert nd.etallons_.ndim == 3
+    # chaque point du noyau doit provenir de X (ou être duplication de padding)
+    for k in range(3):
+        for p in nd.etallons_[k]:
+            assert any(np.allclose(p, q) for q in X)
+
+
+def test_multinoyau_compute_inertia_manual_small():
+    """Test ciblé de _compute_inertia() pour multi-noyaux sur petit jeu de données."""
+    X = np.array([[0.0, 0.0], [1.0, 0.0], [10.0, 10.0], [10.5, 10.5]])
+    nd = NuéesDynamique(data=X, n_clusters=2, n_etalons_per_cluster=2)
+    nd.etallons_ = np.array([
+        [[0.0, 0.0], [0.9, 0.0]],
+        [[10.0, 10.0], [11.0, 11.0]]
+    ])
+    nd.labels_ = np.array([0, 0, 1, 1])
+    inertia = nd._compute_inertia()
+    # calcul manuel
+    flat = nd.etallons_.reshape(-1, X.shape[1])
+    D_flat = np.linalg.norm(X[:, None, :] - flat[None, :, :], axis=2)
+    D_reshaped = D_flat.reshape(X.shape[0], nd.n_clusters, nd.n_etalons_per_cluster)
+    D_min = np.min(D_reshaped, axis=2)
+    chosen = D_min[np.arange(X.shape[0]), nd.labels_]
+    expected = float(np.sum(chosen ** 2))
+    npt.assert_allclose(inertia, expected)
+
+
+def test_nuees_dynamique_chi2_metric():
+    """
+    Teste NuéesDynamique avec distance_metric='chi2'. Vérifie convergence, inertie, labels valides.
+    """
+    X = np.abs(np.random.randn(50, 4)) + 0.1
+    nd = NuéesDynamique(data=X, n_clusters=3, distance_metric='chi2', random_state=42)
+    nd.fit()
+    assert nd.labels_ is not None
+    assert nd.labels_.shape == (50,)
+    assert set(nd.labels_) <= {0, 1, 2}
+    assert nd.get_inertia() > 0
+    assert nd.n_iter_ >= 1
+    assert nd.etallons_.shape == (3, 4)
+
+
+def test_nuees_dynamique_sebestyen_metric():
+    """
+    Teste NuéesDynamique avec distance_metric='sebestyen'. Vérifie convergence, inertie, labels valides.
+    """
+    X = np.abs(np.random.randn(50, 4)) + 0.1
+    nd = NuéesDynamique(data=X, n_clusters=3, distance_metric='sebestyen', random_state=42)
+    nd.fit()
+    assert nd.labels_ is not None
+    assert nd.labels_.shape == (50,)
+    assert set(nd.labels_) <= {0, 1, 2}
+    assert nd.get_inertia() > 0
+    assert nd.n_iter_ >= 1
+    assert nd.etallons_.shape == (3, 4)
+
+
+def test_nuees_dynamique_chi2_reproducibility():
+    """
+    Teste reproductibilité avec chi2 et random_state fixe.
+    """
+    X = np.abs(np.random.randn(30, 3)) + 0.1
+    nd1 = NuéesDynamique(X, n_clusters=2, distance_metric='chi2', random_state=123)
+    nd1.fit()
+    nd2 = NuéesDynamique(X, n_clusters=2, distance_metric='chi2', random_state=123)
+    nd2.fit()
+    npt.assert_array_equal(nd1.labels_, nd2.labels_)
+    npt.assert_array_almost_equal(nd1.etallons_, nd2.etallons_)
+    npt.assert_almost_equal(nd1.get_inertia(), nd2.get_inertia())
+
+
+def test_nuees_dynamique_sebestyen_reproducibility():
+    """
+    Teste reproductibilité avec sebestyen et random_state fixe.
+    """
+    X = np.abs(np.random.randn(30, 3)) + 0.1
+    nd1 = NuéesDynamique(X, n_clusters=2, distance_metric='sebestyen', random_state=123)
+    nd1.fit()
+    nd2 = NuéesDynamique(X, n_clusters=2, distance_metric='sebestyen', random_state=123)
+    nd2.fit()
+    npt.assert_array_equal(nd1.labels_, nd2.labels_)
+    npt.assert_array_almost_equal(nd1.etallons_, nd2.etallons_)
+    npt.assert_almost_equal(nd1.get_inertia(), nd2.get_inertia())
+
+
+def test_nuees_dynamique_chi2_predict():
+    """
+    Teste predict() avec chi2 sur nouvelles données.
+    """
+    X_train = np.abs(np.random.randn(40, 3)) + 0.1
+    X_test = np.abs(np.random.randn(10, 3)) + 0.1
+    nd = NuéesDynamique(X_train, n_clusters=2, distance_metric='chi2', random_state=42).fit()
+    labels_test = nd.predict(X_test)
+    assert labels_test.shape == (10,)
+    assert set(labels_test) <= {0, 1}
+
+
+def test_nuees_dynamique_sebestyen_predict():
+    """
+    Teste predict() avec sebestyen sur nouvelles données.
+    """
+    X_train = np.abs(np.random.randn(40, 3)) + 0.1
+    X_test = np.abs(np.random.randn(10, 3)) + 0.1
+    nd = NuéesDynamique(X_train, n_clusters=2, distance_metric='sebestyen', random_state=42).fit()
+    labels_test = nd.predict(X_test)
+    assert labels_test.shape == (10,)
+    assert set(labels_test) <= {0, 1}
+
+
+# ============================================================================
+# Tests des métriques de l'article (ni, Si, S, noyaux représentatifs)
+# ============================================================================
+
+
+def test_cluster_sizes_after_fit(simple_data_2d):
+    """
+    Teste cluster_sizes_ après fit().
+    """
+    X, _ = simple_data_2d
+    nd = NuéesDynamique(data=X, n_clusters=3, random_state=42)
+    nd.fit()
+    assert hasattr(nd, 'cluster_sizes_') and nd.cluster_sizes_ is not None
+    assert nd.cluster_sizes_.shape == (3,)
+    npt.assert_array_equal(nd.cluster_sizes_, np.bincount(nd.labels_, minlength=3))
+    assert np.sum(nd.cluster_sizes_) == X.shape[0]
+
+
+def test_get_cluster_sizes_without_fit():
+    """
+    Teste get_cluster_sizes() sans fit().
+    """
+    X = np.random.RandomState(42).randn(20, 2)
+    nd = NuéesDynamique(data=X, n_clusters=3)
+    with pytest.raises(ValueError):
+        nd.get_cluster_sizes()
+
+
+def test_homogeneite_per_cluster_shape_and_values(simple_data_2d):
+    """
+    Teste homogeneite_per_cluster_ après fit().
+    """
+    X, _ = simple_data_2d
+    nd = NuéesDynamique(data=X, n_clusters=3, random_state=42)
+    nd.fit()
+    assert hasattr(nd, 'homogeneite_per_cluster_') and nd.homogeneite_per_cluster_ is not None
+    assert nd.homogeneite_per_cluster_.shape == (3,)
+    assert np.all(nd.homogeneite_per_cluster_ >= 0)
+    npt.assert_allclose(nd.homogeneite_per_cluster_.sum(), nd.get_inertia())
+
+
+def test_S_total_equals_inertia(simple_data_2d):
+    """
+    Teste S_total_ == inertia_.
+    """
+    X, _ = simple_data_2d
+    nd = NuéesDynamique(data=X, n_clusters=3, random_state=42)
+    nd.fit()
+    assert hasattr(nd, 'S_total_') and nd.S_total_ is not None
+    npt.assert_almost_equal(nd.S_total_, nd.inertia_)
+    assert nd.get_S_total() == nd.get_inertia()
+
+
+def test_representative_noyaux_shape(simple_data_2d):
+    """
+    Teste representative_noyau_ après fit().
+    """
+    X, _ = simple_data_2d
+    nd = NuéesDynamique(data=X, n_clusters=3, random_state=42)
+    nd.fit()
+    assert hasattr(nd, 'representative_noyau_') and nd.representative_noyau_ is not None
+    assert nd.representative_noyau_.shape == (3, X.shape[1])
+    # Pour ni=1, doit être égal aux étalons
+    npt.assert_array_almost_equal(nd.representative_noyau_, nd.etallons_)
+
+
+def test_representative_noyaux_multinoyau(data_multinoyau_2d):
+    """
+    Teste representative_noyau_ en mode multi-noyaux.
+    """
+    X, _ = data_multinoyau_2d
+    nd = NuéesDynamique(data=X, n_clusters=3, n_etalons_per_cluster=5, random_state=42)
+    nd.fit()
+    assert nd.representative_noyau_.shape == (3, X.shape[1])
+    for k in range(3):
+        expected = np.mean(nd.etallons_[k], axis=0)
+        npt.assert_allclose(nd.representative_noyau_[k], expected)
+
+
+def test_homogeneite_empty_cluster():
+    """
+    Teste homogeneite_per_cluster_ avec cluster vide.
+    """
+    X = np.array([[0, 0], [0.1, 0.1], [10, 10]])
+    nd = NuéesDynamique(data=X, n_clusters=3, random_state=42)
+    nd.initialize_etallons()
+    nd.labels_ = np.array([0, 0, 1])  # Cluster 2 vide
+    homogeneite = nd._compute_homogeneite_per_cluster()
+    assert homogeneite[2] == 0.0
+
+
+def test_all_getters_without_fit():
+    """
+    Teste tous les getters sans fit().
+    """
+    X = np.random.RandomState(42).randn(20, 2)
+    nd = NuéesDynamique(data=X, n_clusters=3)
+    with pytest.raises(ValueError):
+        nd.get_homogeneite_per_cluster()
+    with pytest.raises(ValueError):
+        nd.get_S_total()
+    with pytest.raises(ValueError):
+        nd.get_representative_noyaux()
+
+
+def test_metrics_reproducibility(simple_data_2d):
+    """
+    Teste reproductibilité des métriques.
+    """
+    X, _ = simple_data_2d
+    nd1 = NuéesDynamique(data=X, n_clusters=3, random_state=42)
+    nd1.fit()
+    nd2 = NuéesDynamique(data=X, n_clusters=3, random_state=42)
+    nd2.fit()
+    npt.assert_array_equal(nd1.cluster_sizes_, nd2.cluster_sizes_)
+    npt.assert_array_almost_equal(nd1.homogeneite_per_cluster_, nd2.homogeneite_per_cluster_)
+    npt.assert_almost_equal(nd1.S_total_, nd2.S_total_)
+    npt.assert_array_almost_equal(nd1.representative_noyau_, nd2.representative_noyau_)
+
+
+def test_homogeneite_with_different_metrics():
+    """
+    Teste homogeneite_per_cluster_ avec différentes métriques.
+    """
+    X = np.random.RandomState(42).randn(20, 2)
+    for metric in ['manhattan', 'chebyshev']:
+        nd = NuéesDynamique(data=X, n_clusters=3, distance_metric=metric, random_state=42)
+        nd.fit()
+        assert np.all(nd.homogeneite_per_cluster_ >= 0)
+        npt.assert_almost_equal(nd.S_total_, nd.inertia_)

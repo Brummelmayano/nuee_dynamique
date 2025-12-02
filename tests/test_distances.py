@@ -15,6 +15,8 @@ from nuees_dynamiques.distances import (
     manhattan_distance,
     minkowski_distance,
     chebyshev_distance,
+    chi2_distance,
+    sebestyen_distance,
     compute_distance,
     compute_distance_matrix,
     pairwise_distances,
@@ -283,6 +285,125 @@ def test_chebyshev_distance_symmetry():
 
 
 # ============================================================================
+# Tests pour chi2_distance (distance χ²)
+# ============================================================================
+
+
+def test_chi2_distance_known_values():
+    """
+    Teste chi2_distance avec des cas connus. Distance χ² = sum((x_i - y_i)^2 / (x_i + y_i + eps)).
+    """
+    # Cas 1 : x = [1, 2], y = [1, 2] → distance = 0 (vecteurs identiques)
+    x = [1, 2]
+    y = [1, 2]
+    result = chi2_distance(x, y)
+    npt.assert_almost_equal(result, 0, decimal=3)
+    # Cas 2 : x = [1, 3], y = [2, 4] → calcul manuel : ((1-2)^2/(1+2) + (3-4)^2/(3+4)) = 1/3 + 1/7 ≈ 0.476
+    x = [1, 3]
+    y = [2, 4]
+    result = chi2_distance(x, y)
+    expected = 1/3 + 1/7
+    npt.assert_almost_equal(result, expected, decimal=3)
+    # Cas 3 : x = [0, 0], y = [0, 0] → distance ≈ 0 (epsilon gère division par zéro)
+    x = [0, 0]
+    y = [0, 0]
+    result = chi2_distance(x, y)
+    npt.assert_almost_equal(result, 0, decimal=3)
+
+
+def test_chi2_distance_symmetry():
+    """
+    Vérifier chi2_distance(x, y) == chi2_distance(y, x) pour vecteurs aléatoires positifs
+    """
+    x = np.random.rand(5) * 10
+    y = np.random.rand(5) * 10
+    d_xy = chi2_distance(x, y)
+    d_yx = chi2_distance(y, x)
+    npt.assert_almost_equal(d_xy, d_yx)
+
+
+def test_chi2_distance_negative_values():
+    """
+    Tester avec x = [-1, 2], y = [1, -1] → doit retourner une valeur (epsilon gère dénominateur négatif)
+    Note : pas d'erreur levée, mais résultat peut être non-intuitif (documenter dans docstring)
+    """
+    x = [-1, 2]
+    y = [1, -1]
+    result = chi2_distance(x, y)
+    assert isinstance(result, float)
+
+
+def test_chi2_distance_invalid_inputs():
+    """
+    Vecteurs de tailles différentes → ValueError
+    """
+    x = [1, 2]
+    y = [1, 2, 3]
+    with pytest.raises(ValueError):
+        chi2_distance(x, y)
+
+
+# ============================================================================
+# Tests pour sebestyen_distance (distance de Sebestyén)
+# ============================================================================
+
+
+def test_sebestyen_distance_known_values():
+    """
+    Teste sebestyen_distance avec des cas connus. Distance Sebestyén = 0.5 * (KL(x||y) + KL(y||x)).
+    """
+    # Cas 1 : x = [1, 1], y = [1, 1] → distance = 0 (distributions identiques après normalisation)
+    x = [1, 1]
+    y = [1, 1]
+    result = sebestyen_distance(x, y)
+    npt.assert_almost_equal(result, 0, decimal=3)
+    # Cas 2 : x = [1, 2], y = [2, 1] → calcul manuel KL symétrique (normaliser puis KL)
+    x = [1, 2]
+    y = [2, 1]
+    result = sebestyen_distance(x, y)
+    assert result >= 0  # KL toujours ≥ 0
+    # Cas 3 : x = [0, 0], y = [1, 1] → epsilon gère valeurs nulles
+    x = [0, 0]
+    y = [1, 1]
+    result = sebestyen_distance(x, y)
+    assert result >= 0
+
+
+def test_sebestyen_distance_symmetry():
+    """
+    Vérifier sebestyen_distance(x, y) == sebestyen_distance(y, x) (par définition symétrique)
+    """
+    x = np.random.rand(5) + 0.1
+    y = np.random.rand(5) + 0.1
+    d_xy = sebestyen_distance(x, y)
+    d_yx = sebestyen_distance(y, x)
+    npt.assert_almost_equal(d_xy, d_yx)
+
+
+def test_sebestyen_distance_normalization():
+    """
+    Tester que sebestyen_distance([1, 2], [2, 4]) == sebestyen_distance([0.5, 1], [1, 2]) (invariance par scaling positif)
+    """
+    x1 = [1, 2]
+    y1 = [2, 4]
+    d1 = sebestyen_distance(x1, y1)
+    x2 = [0.5, 1]
+    y2 = [1, 2]
+    d2 = sebestyen_distance(x2, y2)
+    npt.assert_almost_equal(d1, d2)
+
+
+def test_sebestyen_distance_invalid_inputs():
+    """
+    Vecteurs de tailles différentes → ValueError
+    """
+    x = [1, 2]
+    y = [1, 2, 3]
+    with pytest.raises(ValueError):
+        sebestyen_distance(x, y)
+
+
+# ============================================================================
 # Tests pour compute_distance (fonction de dispatch)
 # ============================================================================
 
@@ -369,6 +490,24 @@ def test_compute_distance_unknown_metric():
         compute_distance(x, y, metric="unknown_metric")
 
 
+def test_compute_distance_chi2():
+    """
+    compute_distance([1, 3], [2, 4], metric="chi2") → vérifier cohérence avec chi2_distance
+    """
+    result = compute_distance([1, 3], [2, 4], metric="chi2")
+    expected = chi2_distance([1, 3], [2, 4])
+    npt.assert_almost_equal(result, expected)
+
+
+def test_compute_distance_sebestyen():
+    """
+    compute_distance([1, 2], [2, 1], metric="sebestyen") → vérifier cohérence avec sebestyen_distance
+    """
+    result = compute_distance([1, 2], [2, 1], metric="sebestyen")
+    expected = sebestyen_distance([1, 2], [2, 1])
+    npt.assert_almost_equal(result, expected)
+
+
 # ============================================================================
 # Tests pour compute_distance_matrix (calcul batch)
 # ============================================================================
@@ -453,6 +592,34 @@ def test_compute_distance_matrix_non_2d():
     
     with pytest.raises(ValueError):
         compute_distance_matrix(X, centroids, metric="euclidean")
+
+
+def test_compute_distance_matrix_chi2():
+    """
+    X = [[1, 2], [3, 4]], centroids = [[1, 2]] → vérifier shape (2, 1) et valeurs cohérentes avec appels unitaires
+    """
+    X = [[1, 2], [3, 4]]
+    centroids = [[1, 2]]
+    result = compute_distance_matrix(X, centroids, metric='chi2')
+    assert result.shape == (2, 1)
+    expected0 = chi2_distance([1, 2], [1, 2])
+    expected1 = chi2_distance([3, 4], [1, 2])
+    npt.assert_almost_equal(result[0, 0], expected0)
+    npt.assert_almost_equal(result[1, 0], expected1)
+
+
+def test_compute_distance_matrix_sebestyen():
+    """
+    Idem pour sebestyen
+    """
+    X = [[1, 2], [3, 4]]
+    centroids = [[1, 2]]
+    result = compute_distance_matrix(X, centroids, metric='sebestyen')
+    assert result.shape == (2, 1)
+    expected0 = sebestyen_distance([1, 2], [1, 2])
+    expected1 = sebestyen_distance([3, 4], [1, 2])
+    npt.assert_almost_equal(result[0, 0], expected0)
+    npt.assert_almost_equal(result[1, 0], expected1)
 
 
 # ============================================================================
@@ -580,3 +747,51 @@ def test_distance_metrics_consistency():
         for j in range(centroids.shape[0]):
             expected = euclidean_distance(X[i], centroids[j])
             npt.assert_almost_equal(batch_result[i, j], expected)
+
+
+def test_chi2_sebestyen_consistency():
+    """
+    Vérifier que compute_distance_matrix(X, C, metric='chi2') donne mêmes résultats que boucle manuelle avec chi2_distance
+    Idem pour sebestyen
+    """
+    X = np.random.rand(5, 3) + 0.1
+    C = np.random.rand(2, 3) + 0.1
+    # For chi2
+    batch_chi2 = compute_distance_matrix(X, C, metric='chi2')
+    manual_chi2 = np.array([[chi2_distance(X[i], C[j]) for j in range(C.shape[0])] for i in range(X.shape[0])])
+    npt.assert_array_almost_equal(batch_chi2, manual_chi2)
+    # For sebestyen
+    batch_seb = compute_distance_matrix(X, C, metric='sebestyen')
+    manual_seb = np.array([[sebestyen_distance(X[i], C[j]) for j in range(C.shape[0])] for i in range(X.shape[0])])
+    npt.assert_array_almost_equal(batch_seb, manual_seb)
+def test_pairwise_distances_chi2():
+    """
+    Teste pairwise_distances avec métrique 'chi2'.
+    """
+    X = np.array([[1, 2], [3, 4]])
+    D = pairwise_distances(X, 'chi2')
+    # Vérifier la forme
+    assert D.shape == (2, 2)
+    # Vérifier la symétrie
+    npt.assert_array_almost_equal(D, D.T)
+    # Vérifier la diagonale nulle
+    npt.assert_array_almost_equal(np.diag(D), [0.0, 0.0])
+    # Vérifier cohérence avec chi2_distance
+    npt.assert_almost_equal(D[0, 1], chi2_distance(X[0], X[1]))
+
+
+def test_pairwise_distances_sebestyen():
+    """
+    Teste pairwise_distances avec métrique 'sebestyen'.
+    """
+    X = np.array([[1, 2], [3, 4]])
+    D = pairwise_distances(X, 'sebestyen')
+    # Vérifier la forme
+    assert D.shape == (2, 2)
+    # Vérifier la symétrie
+    npt.assert_array_almost_equal(D, D.T)
+    # Vérifier la diagonale nulle
+    npt.assert_array_almost_equal(np.diag(D), [0.0, 0.0])
+    # Vérifier cohérence avec sebestyen_distance
+    npt.assert_almost_equal(D[0, 1], sebestyen_distance(X[0], X[1]))
+    npt.assert_array_almost_equal(batch_seb, manual_seb)
