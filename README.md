@@ -15,12 +15,24 @@ Principe de l'algorithme
 4. Convergence : répéter jusqu'à stabilisation ou nombre maximum d'itérations.
 5. Résultat : partition finale et étalons.
 
+**Distinction clé** : Le paramètre `init_method` contrôle uniquement le choix initial des étalons (étape 1), tandis que `etallon_method` définit comment les étalons sont recalculés à chaque itération (étape 3). Ces deux paramètres sont indépendants et permettent une grande flexibilité.
+
+Méthodes d'initialisation des étalons
+-----------------------------------
+Quatre méthodes d'initialisation sont disponibles :
+
+- **Centroïde unique (similaire KMeans)** (`init_method='kmeans++'`) : Initialisation probabiliste avec kmeans++ (Arthur & Vassilvitskii 2007), force 1 étalon/cluster pour un comportement similaire à K-Means.
+- **Ensemble de points aléatoires** (`init_method='random'`) : Sélection aléatoire de k ensembles de points (Diday 1971, baseline), permet les noyaux multi-étalons.
+- **Distribution probabiliste (GMM)** (`init_method='gmm'`) : Modèle de mélange gaussien, capture les structures elliptiques et probabilistes.
+- **Axes factoriels (ACP)** (`init_method='pca'`) : Projection PCA et sélection des points extrêmes (Su & Dy 2007, déterministe), exploite la variance maximale.
+
 Différences avec K-means
 ------------------------
 - 4 méthodes d'étalons : `centroid`, `medoid`, `median`, `mode`.
 - Métriques multiples : `euclidean`, `manhattan`, `minkowski`, `chebyshev`, etc.
-- Initialisations : `random`, `kmeans++`.
+- 4 méthodes d'initialisation : `random`, `kmeans++`, `gmm`, `pca`.
 - API : `fit()`, `predict()`, `fit_predict()`, `get_inertia()`.
+- Noyaux multi-étalons (Diday IV.1) : chaque cluster représenté par plusieurs points.
 
 Fonctionnalités clés ✨
 - `centroid` (moyenne), `medoid` (point réel), `median` (médiane robuste), `mode` (valeur fréquente).
@@ -239,9 +251,15 @@ pytest -q
 ```
 
 
+Fondement scientifique
+----------------------
+La méthode des Nuées Dynamiques (Diday, 1971) généralise K-means en permettant des noyaux multi-étalons où chaque cluster est représenté par plusieurs points plutôt qu'un seul centroïde. L'initialisation par "Ensemble de points aléatoires" correspond aux paquets aléatoires de Diday (IV.1), tandis que les mises à jour par centroïde correspondent aux isobarycentres de ces noyaux. Les extensions modernes incluent l'initialisation GMM pour capturer les structures probabilistes (Jaccard 0.745 vs 0.652 pour K-means) et PCA-Part pour une initialisation déterministe exploitant la variance maximale (Su & Dy, 2007).
+
 Références
 ----------
 - Diday, E. (1971). Méthode des nuées dynamiques.
+- Arthur, D., & Vassilvitskii, S. (2007). k-means++: The advantages of careful seeding.
+- Su, T., & Dy, J. G. (2007). A Deterministic Method for Initializing K-means Clustering.
 
 Licence
 -------

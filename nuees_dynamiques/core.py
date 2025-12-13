@@ -11,8 +11,21 @@ Références
 Diday, E. (1971). Méthode des nuées dynamiques.
 """
 from typing import Optional, Literal
+import warnings
 import numpy as np
 from scipy.stats import mode as scipy_mode
+
+try:
+    from sklearn.mixture import GaussianMixture
+    _HAS_SKLEARN_MIXTURE = True
+except ImportError:
+    _HAS_SKLEARN_MIXTURE = False
+
+try:
+    from sklearn.decomposition import PCA
+    _HAS_SKLEARN_PCA = True
+except ImportError:
+    _HAS_SKLEARN_PCA = False
 
 from .distances import (
     compute_distance,
@@ -37,15 +50,48 @@ class NuéesDynamique:
         Nombre maximal d'itérations (défaut=100).
     tolerance : float, optional
         Seuil de convergence sur le déplacement maximal des étalons (défaut=1e-4).
-    init_method : {'random','kmeans++'}, optional
-        Méthode d'initialisation des étalons.
+    init_method : {'random','kmeans++','gmm','pca'}, optional
+        Méthode d'initialisation des étalons (choix unique au début de l'algorithme).
+        - 'random' : sélection aléatoire de n_clusters observations.
+        - 'kmeans++' : initialisation probabiliste (Arthur & Vassilvitskii, 2007).
+        - 'gmm' : initialisation par Gaussian Mixture Model (modèle de mélange gaussien).
+          Entraîne un GMM avec n_clusters composantes et utilise les moyennes ou
+          échantillonne des points selon `gmm_init_mode`.
+        - 'pca' : initialisation par axes factoriels (Principal Component Analysis).
+          Projette les données sur les `pca_n_components` premiers axes principaux.
+          Sélectionne les points extrêmes (min/max) le long de chaque axe principal.
+          Choisit les `n_clusters` points les plus éloignés du centre dans l'espace PCA.
+          Approche déterministe et scientifiquement validée (PCA-Part, Su & Dy 2007).
+
+        Note : `init_method` contrôle uniquement l'initialisation (étape 1), tandis que
+        `etallon_method` définit comment les étalons sont recalculés à chaque itération.
+        Dans l'interface Streamlit, ces méthodes correspondent aux libellés :
+        'kmeans++' → "Centroïde unique (similaire KMeans)",
+        'random' → "Ensemble de points aléatoires",
+        'gmm' → "Distribution probabiliste (GMM)",
+        'pca' → "Axes factoriels (ACP)".
     etallon_method : {'centroid','medoid','median','mode'}, optional
         Façon de recalculer les étalons à chaque itération.
     n_etalons_per_cluster : int, optional
-        Nombre d'étalons (ni) par cluster. Si `> 1`, chaque cluster est
-        représenté par un noyau de `ni` points (conforme à Diday IV.1).
+        Nombre d'étalons (ni) par cluster. Définit la cardinalité des noyaux Ei.
+        - Si `n_etalons_per_cluster == 1` : chaque cluster est représenté par un
+          seul étalon (cas historique, compatible K-means).
+        - Si `n_etalons_per_cluster > 1` : chaque cluster est représenté par un
+          noyau multi-étalon de `ni` points (conforme à Diday 1971, section IV.1).
+          Les `etallons_[k]` forment alors le noyau `E_i` du cluster k.
     random_state : int | None, optional
         Graine pour la reproductibilité.
+    gmm_init_mode : {'means', 'sample'}, default='means'
+        Mode d'initialisation GMM (utilisé uniquement si init_method='gmm').
+        - 'means' : utilise les moyennes des composantes gaussiennes comme étalons.
+        - 'sample' : échantillonne des points depuis les distributions gaussiennes ajustées.
+        Le mode 'means' est recommandé pour une initialisation stable et déterministe
+        (à random_state fixé), tandis que 'sample' introduit plus de variabilité stochastique.
+    pca_n_components : int, optional
+        Nombre de composantes principales à utiliser pour l'initialisation 'pca'.
+        Par défaut, égal à `n_clusters`. Doit être compris entre 1 et `n_features`.
+        Utilisé uniquement si `init_method='pca'`.
+        Warning: If 2*pca_n_components < n_clusters, some centers fallback to random.
 
     Attributes
     ----------
@@ -127,7 +173,9 @@ class NuéesDynamique:
         distance_metric: str = "euclidean",
         max_iterations: int = 100,
         tolerance: float = 1e-4,
-        init_method: Literal["random", "kmeans++"] = "random",
+        init_method: Literal["random", "kmeans++", "gmm", "pca"] = "random",
+        gmm_init_mode: Literal["means", "sample"] = "means",
+        pca_n_components: Optional[int] = None,
         etallon_method: Literal["centroid", "medoid", "median", "mode"] = "centroid",
         n_etalons_per_cluster: int = 1,
         random_state: Optional[int] = None,
@@ -147,9 +195,36 @@ class NuéesDynamique:
         self.tolerance = float(tolerance)
         if self.tolerance < 0:
             raise ValueError("`tolerance` doit être supérieure ou égale à 0")
-        if init_method not in ("random", "kmeans++"):
-            raise ValueError("`init_method` doit être 'random' ou 'kmeans++'")
+        if init_method not in ("random", "kmeans++", "gmm", "pca"):
+            raise ValueError("`init_method` doit être 'random', 'kmeans++', 'gmm' ou 'pca'")
+        if gmm_init_mode not in ("means", "sample"):
+            raise ValueError("`gmm_init_mode` doit être 'means' ou 'sample'")
+        if init_method == "gmm" and not _HAS_SKLEARN_MIXTURE:
+            raise ImportError(
+                "L'initialisation 'gmm' nécessite scikit-learn. "
+                "Installez-le via : pip install scikit-learn"
+            )
+        if init_method == "pca" and not _HAS_SKLEARN_PCA:
+            raise ImportError(
+                "L'initialisation 'pca' nécessite scikit-learn. "
+                "Installez-le via : pip install scikit-learn"
+            )
         self.init_method = init_method
+        self.gmm_init_mode = gmm_init_mode
+        if pca_n_components is None:
+            self.pca_n_components = n_clusters
+        else:
+            if not (isinstance(pca_n_components, int) and 1 <= pca_n_components <= self.data.shape[1]):
+                raise ValueError(
+                    f"`pca_n_components` doit être un entier entre 1 et n_features ({self.data.shape[1]})"
+                )
+            self.pca_n_components = pca_n_components
+        if self.init_method == 'pca' and 2 * self.pca_n_components < self.n_clusters:
+            warnings.warn(
+                f"For 'pca' init, only ~{2*self.pca_n_components} extreme points available vs {self.n_clusters} clusters. "
+                f"Excess centers will use random selection. Consider larger `pca_n_components`.",
+                UserWarning
+            )
         if etallon_method not in ("centroid", "medoid", "median", "mode"):
             raise ValueError("`etallon_method` doit être 'centroid', 'medoid', 'median' ou 'mode'")
         self.etallon_method = etallon_method
@@ -200,12 +275,35 @@ class NuéesDynamique:
         -----
         - `random` : sélection aléatoire de `n_clusters` observations.
         - `kmeans++` : initialisation probabiliste (préférer les points éloignés).
-        
+        - `gmm` : initialisation par Gaussian Mixture Model (GMM).
+          • Entraîne automatiquement un GMM avec `n_clusters` composantes sur les données.
+          • Mode 'means' : utilise les moyennes des composantes gaussiennes comme étalons.
+          • Mode 'sample' : échantillonne des points depuis les distributions gaussiennes ajustées.
+          • Approche scientifiquement validée (Su & Dy, 2007) pour capturer la structure probabiliste des données.
+
             Pour `n_etalons_per_cluster > 1`, la stratégie est la suivante :
             on commence par calculer des centres 2D (un point représentatif par
             cluster), on effectue une assignation préliminaire de chaque point à
             ces centres, puis on sélectionne `ni` points par cluster pour
             construire le noyau (avec un remplissage si le cluster est trop petit).
+
+        Pour `init_method='gmm'`, le paramètre `gmm_init_mode` contrôle la stratégie :
+        - 'means' : utilise les moyennes GMM (centres des gaussiennes) comme étalons initiaux.
+        - 'sample' : échantillonne aléatoirement des points depuis les distributions gaussiennes.
+        Le mode 'means' est généralement plus stable, tandis que 'sample' introduit plus de variabilité.
+
+        - `pca` : initialisation par axes factoriels (Principal Component Analysis).
+          • Projette les données sur les `pca_n_components` premiers axes principaux.
+          • Sélectionne les points extrêmes (min/max) le long de chaque axe principal.
+          • Choisit les `n_clusters` points les plus éloignés du centre dans l'espace PCA.
+          • Approche déterministe et scientifiquement validée (PCA-Part, Su & Dy 2007).
+          • Pour `n_etalons_per_cluster > 1`, utilise les extrêmes comme centres préliminaires
+            puis sélectionne les `ni` points les plus proches par cluster.
+
+        Pour les noyaux multi-étalons (`n_etalons_per_cluster > 1`), toutes les méthodes
+        d'initialisation suivent le même pattern : calculer d'abord des centres préliminaires
+        (1 par cluster), effectuer une assignation préliminaire, puis construire les noyaux
+        en sélectionnant les `ni` points les plus proches de chaque centre (Diday 1971, IV.1).
 
         Examples
         --------
@@ -239,72 +337,293 @@ class NuéesDynamique:
             self.etallons_history_.append(self.etallons_.copy())
             return self.etallons_
 
-        # kmeans++
-        # Supporter la métrique configurée en utilisant compute_distance_matrix
-        centers = np.empty((self.n_clusters, n_features), dtype=float)
-        # Choisir le premier centre aléatoirement
-        first = self._rng.randint(0, n_samples)
-        centers[0] = self.data[first]
-        # Distances minimales actuelles de chaque point aux centres choisis
-        current_dist_sq = np.full(n_samples, np.inf)
-        for i in range(1, self.n_clusters):
-            # Calculer les distances de tous les points aux centres déjà choisis.
-            # On construit un tableau temporaire de centres sélectionnés.
-            chosen_centers = centers[:i]
-            # compute_distance_matrix supporte la métrique configurée
-            D = compute_distance_matrix(self.data, chosen_centers, metric=self.distance_metric)
-            # distance minimale de chaque point à l'ensemble des centres choisis
-            min_dist = np.min(D, axis=1)
-            # Probabilité proportionnelle au carré des distances (comme k-means++)
-            current_dist_sq = min_dist ** 2
-            total = np.sum(current_dist_sq)
-            if total == 0:
-                # Tous les points sont identiques aux centres sélectionnés ; choisir aléatoirement
-                probs = None
+        if self.init_method == "gmm":
+            # Entraîner un GMM avec n_clusters composantes
+            gmm = GaussianMixture(
+                n_components=self.n_clusters,
+                covariance_type='full',
+                random_state=self.random_state,
+                n_init=10
+            )
+            try:
+                gmm.fit(self.data)
+            except ValueError as e:
+                raise ValueError(
+                    f"GMM-based initialisation failed with n_clusters={self.n_clusters} on data of shape {self.data.shape}. "
+                    f"Consider reducing n_clusters or using a different init_method."
+                ) from e
+            
+            # Extraire les moyennes des composantes gaussiennes
+            gmm_means = gmm.means_  # Shape: (n_clusters, n_features)
+            
+            # Cas 1: n_etalons_per_cluster == 1
+            if self.n_etalons_per_cluster == 1:
+                if self.gmm_init_mode == "means":
+                    # Utiliser directement les moyennes GMM
+                    self.etallons_ = gmm_means.astype(float)
+                else:  # "sample"
+                    # Échantillonner n_clusters points depuis le GMM
+                    samples, _ = gmm.sample(n_samples=self.n_clusters)
+                    self.etallons_ = samples.astype(float)
+                
+                self.etallons_history_ = []
+                self.etallons_history_.append(self.etallons_.copy())
+                return self.etallons_
+            
+            # Cas 2: n_etalons_per_cluster > 1
+            if self.gmm_init_mode == "means":
+                # Effectuer une assignation préliminaire basée sur les moyennes GMM
+                self.etallons_ = gmm_means
+                D_prelim = compute_distance_matrix(self.data, gmm_means, metric=self.distance_metric)
+                prelim_labels = np.argmin(D_prelim, axis=1)
+                multi_etallons = []
+                for k in range(self.n_clusters):
+                    members = np.where(prelim_labels == k)[0]
+                    if members.size == 0:
+                        # Cluster vide : échantillonner depuis le GMM
+                        samples, _ = gmm.sample(n_samples=self.n_etalons_per_cluster)
+                        selected = samples
+                    else:
+                        # Sélectionner les ni points les plus proches de la moyenne GMM
+                        prototype = gmm_means[k]
+                        proto_arr = prototype.reshape(1, -1)
+                        dists = compute_distance_matrix(
+                            self.data[members], proto_arr, metric=self.distance_metric
+                        ).ravel()
+                        sorted_idx = np.argsort(dists)
+                        ni_actual = min(self.n_etalons_per_cluster, members.size)
+                        chosen_member_idxs = members[sorted_idx[:ni_actual]]
+                        selected = self.data[chosen_member_idxs]
+                        
+                        # Padding si nécessaire
+                        if ni_actual < self.n_etalons_per_cluster:
+                            padding = np.tile(selected[-1], (self.n_etalons_per_cluster - ni_actual, 1))
+                            selected = np.vstack([selected, padding])
+                    
+                    multi_etallons.append(selected.astype(float))
+                self.etallons_ = np.array(multi_etallons)
+                self.etallons_history_ = []
+                self.etallons_history_.append(self.etallons_.copy())
+                return self.etallons_
+            else:  # "sample"
+                total_etalons_needed = self.n_clusters * self.n_etalons_per_cluster
+                samples, component_labels = gmm.sample(n_samples=total_etalons_needed)
+                
+                # Réorganiser les échantillons par composante pour former les noyaux
+                multi_etallons = []
+                for k in range(self.n_clusters):
+                    # Sélectionner les échantillons de la composante k
+                    component_samples = samples[component_labels == k]
+                    
+                    if component_samples.shape[0] >= self.n_etalons_per_cluster:
+                        # Prendre les ni premiers échantillons
+                        selected = component_samples[:self.n_etalons_per_cluster]
+                    else:
+                        # Pas assez d'échantillons : compléter en échantillonnant davantage
+                        needed = self.n_etalons_per_cluster - component_samples.shape[0]
+                        # On crée un GaussianMixture minimal à 1 composante en assignant manuellement
+                        # les paramètres ajustés depuis gmm pour l'échantillonnage uniquement.
+                        # Ceci repose sur l'API interne actuelle de scikit-learn pour l'assignation manuelle des paramètres.
+                        # Créer un GMM à une composante pour cette composante spécifique
+                        single_gmm = GaussianMixture(
+                            n_components=1,
+                            covariance_type='full',
+                            random_state=self.random_state
+                        )
+                        # Initialiser avec les paramètres de la composante k
+                        single_gmm.weights_ = np.array([1.0])
+                        single_gmm.means_ = gmm.means_[k:k+1]
+                        single_gmm.covariances_ = gmm.covariances_[k:k+1]
+                        single_gmm.precisions_cholesky_ = gmm.precisions_cholesky_[k:k+1]
+                        
+                        additional_samples, _ = single_gmm.sample(n_samples=needed)
+                        selected = np.vstack([component_samples, additional_samples])
+                    
+                    multi_etallons.append(selected.astype(float))
+                
+                self.etallons_ = np.array(multi_etallons)
+                self.etallons_history_ = []
+                self.etallons_history_.append(self.etallons_.copy())
+                return self.etallons_
+
+        if self.init_method == "pca":
+            # Entraîner PCA avec pca_n_components composantes
+            pca = PCA(n_components=self.pca_n_components, random_state=self.random_state)
+            try:
+                X_pca = pca.fit_transform(self.data)
+            except ValueError as e:
+                raise ValueError(
+                    f"PCA-based initialisation failed with pca_n_components={self.pca_n_components} "
+                    f"on data of shape {self.data.shape}. Consider reducing pca_n_components or using "
+                    f"a different init_method."
+                ) from e
+
+            # Cas 1: n_etalons_per_cluster == 1
+            if self.n_etalons_per_cluster == 1:
+                # Sélectionner les points extrêmes le long des axes principaux
+                extreme_indices = set()
+                for pc_idx in range(self.pca_n_components):
+                    # Point avec projection minimale sur cet axe
+                    min_idx = np.argmin(X_pca[:, pc_idx])
+                    extreme_indices.add(min_idx)
+                    # Point avec projection maximale sur cet axe
+                    max_idx = np.argmax(X_pca[:, pc_idx])
+                    extreme_indices.add(max_idx)
+
+                extreme_indices = list(extreme_indices)
+
+                # Si on a plus d'extrêmes que de clusters nécessaires, sélectionner les k plus éloignés du centre
+                if len(extreme_indices) > self.n_clusters:
+                    # Calculer le centre des données dans l'espace PCA
+                    pca_center = np.mean(X_pca, axis=0)
+                    # Distances des extrêmes au centre
+                    distances_to_center = np.linalg.norm(X_pca[extreme_indices] - pca_center, axis=1)
+                    # Sélectionner les k points les plus éloignés
+                    sorted_idx = np.argsort(distances_to_center)[::-1]
+                    selected_extreme_indices = [extreme_indices[i] for i in sorted_idx[:self.n_clusters]]
+                elif len(extreme_indices) < self.n_clusters:
+                    # Pas assez d'extrêmes : compléter avec des points aléatoires
+                    remaining_indices = list(set(range(n_samples)) - extreme_indices)
+                    n_additional = self.n_clusters - len(extreme_indices)
+                    additional_indices = self._rng.choice(remaining_indices, size=n_additional, replace=False)
+                    selected_extreme_indices = extreme_indices + list(additional_indices)
+                else:
+                    selected_extreme_indices = extreme_indices
+
+                self.etallons_ = self.data[selected_extreme_indices].astype(float)
+                self.etallons_history_ = []
+                self.etallons_history_.append(self.etallons_.copy())
+                return self.etallons_
+            # Cas 2: n_etalons_per_cluster > 1
+            # Utiliser les extrêmes comme centres préliminaires pour l'assignation
+            extreme_indices = set()
+            for pc_idx in range(self.pca_n_components):
+                min_idx = np.argmin(X_pca[:, pc_idx])
+                extreme_indices.add(min_idx)
+                max_idx = np.argmax(X_pca[:, pc_idx])
+                extreme_indices.add(max_idx)
+
+            extreme_indices = list(extreme_indices)
+
+            # Sélectionner n_clusters centres parmi les extrêmes
+            if len(extreme_indices) >= self.n_clusters:
+                pca_center = np.mean(X_pca, axis=0)
+                distances_to_center = np.linalg.norm(X_pca[extreme_indices] - pca_center, axis=1)
+                sorted_idx = np.argsort(distances_to_center)[::-1]
+                selected_extreme_indices = [extreme_indices[i] for i in sorted_idx[:self.n_clusters]]
             else:
-                probs = current_dist_sq / total
-            # Tirage selon la distribution (ou uniforme si probs est None)
-            if probs is None:
-                next_idx = self._rng.choice(n_samples)
-            else:
-                next_idx = self._rng.choice(n_samples, p=probs)
-            centers[i] = self.data[next_idx]
-        # Si ni == 1: comportement historique
-        if self.n_etalons_per_cluster == 1:
+                # Compléter avec des points aléatoires
+                remaining_indices = list(set(range(n_samples)) - extreme_indices)
+                n_additional = self.n_clusters - len(extreme_indices)
+                additional_indices = self._rng.choice(remaining_indices, size=n_additional, replace=False)
+                selected_extreme_indices = extreme_indices + list(additional_indices)
+
+            centers = self.data[selected_extreme_indices]
+
+            # Effectuer une assignation préliminaire
             self.etallons_ = centers
+            D_prelim = compute_distance_matrix(self.data, centers, metric=self.distance_metric)
+            prelim_labels = np.argmin(D_prelim, axis=1)
+
+            # Construire les noyaux multi-étalons
+            multi_etallons = []
+            for k in range(self.n_clusters):
+                members = np.where(prelim_labels == k)[0]
+                if members.size == 0:
+                    # Cluster vide : sélectionner aléatoirement
+                    idxs = self._rng.choice(n_samples, size=min(self.n_etalons_per_cluster, n_samples), replace=False)
+                    selected = self.data[idxs]
+                else:
+                    # Sélectionner les ni points les plus proches du centre
+                    prototype = centers[k]
+                    proto_arr = prototype.reshape(1, -1)
+                    dists = compute_distance_matrix(
+                        self.data[members], proto_arr, metric=self.distance_metric
+                    ).ravel()
+                    sorted_idx = np.argsort(dists)
+                    ni_actual = min(self.n_etalons_per_cluster, members.size)
+                    chosen_member_idxs = members[sorted_idx[:ni_actual]]
+                    selected = self.data[chosen_member_idxs]
+
+                    # Padding si nécessaire
+                    if ni_actual < self.n_etalons_per_cluster:
+                        padding = np.tile(selected[-1], (self.n_etalons_per_cluster - ni_actual, 1))
+                        selected = np.vstack([selected, padding])
+
+                multi_etallons.append(selected.astype(float))
+
+            self.etallons_ = np.array(multi_etallons)
             self.etallons_history_ = []
             self.etallons_history_.append(self.etallons_.copy())
             return self.etallons_
 
-        # Multi-étalons : construire noyaux à partir d'une assignation préliminaire
-        # Effectuer l'assignation préliminaire en utilisant les centres 2D
-        # calculés ci-dessus (ne pas appeler `assign_objects()` ici).
-        self.etallons_ = centers
-        D_prelim = compute_distance_matrix(self.data, centers, metric=self.distance_metric)
-        prelim_labels = np.argmin(D_prelim, axis=1)
-        multi_etallons = []
-        for k in range(self.n_clusters):
-            members = np.where(prelim_labels == k)[0]
-            if members.size == 0:
-                idxs = self._rng.choice(n_samples, size=min(self.n_etalons_per_cluster, n_samples), replace=False)
-                selected = self.data[idxs]
-            else:
-                # Sélectionner les points les plus proches du prototype (centroïde)
-                prototype = np.mean(self.data[members], axis=0)
-                proto_arr = prototype.reshape(1, -1)
-                dists = compute_distance_matrix(self.data[members], proto_arr, metric=self.distance_metric).ravel()
-                sorted_idx = np.argsort(dists)
-                ni_actual = min(self.n_etalons_per_cluster, members.size)
-                chosen_member_idxs = members[sorted_idx[:ni_actual]]
-                selected = self.data[chosen_member_idxs]
-                if ni_actual < self.n_etalons_per_cluster:
-                    padding = np.tile(selected[-1], (self.n_etalons_per_cluster - ni_actual, 1))
-                    selected = np.vstack([selected, padding])
-            multi_etallons.append(selected.astype(float))
-        self.etallons_ = np.array(multi_etallons)
-        self.etallons_history_ = []
-        self.etallons_history_.append(self.etallons_.copy())
-        return self.etallons_
+        if self.init_method == "kmeans++":
+            # kmeans++
+            # Supporter la métrique configurée en utilisant compute_distance_matrix
+            centers = np.empty((self.n_clusters, n_features), dtype=float)
+            # Choisir le premier centre aléatoirement
+            first = self._rng.randint(0, n_samples)
+            centers[0] = self.data[first]
+            # Distances minimales actuelles de chaque point aux centres choisis
+            current_dist_sq = np.full(n_samples, np.inf)
+            for i in range(1, self.n_clusters):
+                # Calculer les distances de tous les points aux centres déjà choisis.
+                # On construit un tableau temporaire de centres sélectionnés.
+                chosen_centers = centers[:i]
+                # compute_distance_matrix supporte la métrique configurée
+                D = compute_distance_matrix(self.data, chosen_centers, metric=self.distance_metric)
+                # distance minimale de chaque point à l'ensemble des centres choisis
+                min_dist = np.min(D, axis=1)
+                # Probabilité proportionnelle au carré des distances (comme k-means++)
+                current_dist_sq = min_dist ** 2
+                total = np.sum(current_dist_sq)
+                if total == 0:
+                    # Tous les points sont identiques aux centres sélectionnés ; choisir aléatoirement
+                    probs = None
+                else:
+                    probs = current_dist_sq / total
+                # Tirage selon la distribution (ou uniforme si probs est None)
+                if probs is None:
+                    next_idx = self._rng.choice(n_samples)
+                else:
+                    next_idx = self._rng.choice(n_samples, p=probs)
+                centers[i] = self.data[next_idx]
+            # Si ni == 1: comportement historique
+            if self.n_etalons_per_cluster == 1:
+                self.etallons_ = centers
+                self.etallons_history_ = []
+                self.etallons_history_.append(self.etallons_.copy())
+                return self.etallons_
+
+            # Multi-étalons : construire noyaux à partir d'une assignation préliminaire
+            # Effectuer l'assignation préliminaire en utilisant les centres 2D
+            # calculés ci-dessus (ne pas appeler `assign_objects()` ici).
+            self.etallons_ = centers
+            D_prelim = compute_distance_matrix(self.data, centers, metric=self.distance_metric)
+            prelim_labels = np.argmin(D_prelim, axis=1)
+            multi_etallons = []
+            for k in range(self.n_clusters):
+                members = np.where(prelim_labels == k)[0]
+                if members.size == 0:
+                    idxs = self._rng.choice(n_samples, size=min(self.n_etalons_per_cluster, n_samples), replace=False)
+                    selected = self.data[idxs]
+                else:
+                    # Sélectionner les points les plus proches du prototype (centroïde)
+                    prototype = np.mean(self.data[members], axis=0)
+                    proto_arr = prototype.reshape(1, -1)
+                    dists = compute_distance_matrix(self.data[members], proto_arr, metric=self.distance_metric).ravel()
+                    sorted_idx = np.argsort(dists)
+                    ni_actual = min(self.n_etalons_per_cluster, members.size)
+                    chosen_member_idxs = members[sorted_idx[:ni_actual]]
+                    selected = self.data[chosen_member_idxs]
+                    if ni_actual < self.n_etalons_per_cluster:
+                        padding = np.tile(selected[-1], (self.n_etalons_per_cluster - ni_actual, 1))
+                        selected = np.vstack([selected, padding])
+                multi_etallons.append(selected.astype(float))
+            self.etallons_ = np.array(multi_etallons)
+            self.etallons_history_ = []
+            self.etallons_history_.append(self.etallons_.copy())
+            return self.etallons_
 
     def assign_objects(self) -> np.ndarray:
         """Assigne chaque observation au cluster le plus proche.

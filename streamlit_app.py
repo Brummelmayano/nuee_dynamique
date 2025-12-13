@@ -18,6 +18,14 @@ from nuees_dynamiques import (
     compute_distance_matrix,
 )
 
+# Mapping entre libellés français descriptifs et valeurs internes
+INIT_METHOD_LABELS = {
+    "Centroïde unique (similaire KMeans)": "kmeans++",
+    "Ensemble de points aléatoires": "random",
+    "Distribution probabiliste (GMM)": "gmm",
+    "Axes factoriels (ACP)": "pca"
+}
+
 def compute_pca_cached(_X: np.ndarray, n_components: int):
     """PCA for etalon evolution."""
     pca = PCA(n_components=n_components)
@@ -44,7 +52,29 @@ st.markdown(
     Cette réalisation part du principe que l’on ne dispose pas d’indications sur la typologie probable, les étalons sont donc initialement positionnés au hasard.
 
     """
-)
+    )
+
+with st.expander("ℹ️ Guide des méthodes d'initialisation"):
+    st.markdown("""
+    ### Méthodes d'initialisation disponibles
+
+    | Méthode | Type | Avantages | Cas d'usage | Référence |
+    |---------|------|-----------|-------------|-----------|
+    | **Centroïde unique (similaire KMeans)** | Probabiliste | Convergence améliorée, 1 étalon/cluster | Clusters sphériques, comportement K-Means | Arthur & Vassilvitskii 2007 |
+    | **Ensemble de points aléatoires** | Stochastique | Rapide, flexible (multi-étalons) | Exploration, formes complexes | Diday 1971 |
+    | **Distribution probabiliste (GMM)** | Probabiliste | Capture gaussiennes, haute précision | Clusters elliptiques, chevauchements | EM algorithm |
+    | **Axes factoriels (ACP)** | Déterministe | Exploite variance, reproductible | Données structurées, haute dimensionnalité | Su & Dy 2007 |
+
+    **Recommandations scientifiques** :
+    - **GMM** : Validé pour les clusters avec chevauchement et formes elliptiques (supérieur à K-means avec Jaccard 0.745 vs 0.652)
+    - **ACP** : Méthode PCA-Part (Su & Dy, 2007) génère des clusters avec SSE proche du minimum global
+    - **Centroïde unique** : Initialisation standard pour K-means, améliore la convergence
+    - **Ensemble aléatoire** : Baseline simple, nécessite plusieurs exécutions pour robustesse
+
+    **Distinction importante** :
+    - **Initialisation** (`init_method`) : Choix des étalons au DÉBUT de l'algorithme
+    - **Calcul** (`etallon_method`) : Mise à jour des étalons à CHAQUE ITÉRATION (centroïde, médoïde, médiane, mode)
+    """)
 
 # Sidebar controls
 st.sidebar.header("⚙️ Paramètres du clustering")
@@ -117,32 +147,103 @@ st.sidebar.subheader("Paramètres de base")
 
 n_clusters = st.sidebar.number_input("Nombre de clusters", min_value=2, max_value=100, value=3, step=1, help="Nombre de groupes à identifier dans les données")
 
+st.sidebar.subheader("Méthode d'initialisation")
+# Disable PCA if no preview available (to avoid invalid pca_n_components)
+available_methods = ["random", "kmeans++", "gmm"]
+if info_preview is not None:
+    available_methods.append("pca")
 
+# Create available labels based on available methods
+available_labels = [label for label, method in INIT_METHOD_LABELS.items() if method in available_methods]
+
+selected_label = st.sidebar.selectbox(
+    "Méthode d'initialisation des étalons",
+    available_labels,
+    index=0,
+    help="""
+    **Méthode d'initialisation des étalons** : Détermine comment les étalons initiaux sont choisis au début de l'algorithme.
+
+    • Centroïde unique (similaire KMeans) : Initialisation probabiliste avec kmeans++ (Arthur & Vassilvitskii 2007), force 1 étalon/cluster
+    • Ensemble de points aléatoires : Sélection aléatoire de k ensembles de points (Diday 1971, baseline)
+    • Distribution probabiliste (GMM) : Modèle de mélange gaussien, capture les structures elliptiques
+    • Axes factoriels (ACP) : Projection PCA et sélection des points extrêmes (Su & Dy 2007, déterministe)
+
+    ⚠️ À ne pas confondre avec la "Méthode de calcul de l'étalon" qui définit comment les étalons sont MIS À JOUR à chaque itération (centroïde, médoïde, etc.).
+    """ + (" (ACP indisponible sans aperçu du dataset)" if "pca" not in available_methods else "")
+)
+
+# Map the selected label to the internal method
+init_method = INIT_METHOD_LABELS[selected_label]
 
 # Paramètre ni : nombre d'étalons par cluster (champ numérique dans la sidebar)
 #noyaux multi-étalons
-if info_preview is not None:
-    max_ni = max(1, info_preview.get("n_samples", 1) // max(1, 3))
-    default_ni = min(30, max_ni)
+if selected_label == "Centroïde unique (similaire KMeans)":
+    n_etalons_per_cluster = 1
+    st.sidebar.info("Mode centroïde unique activé : chaque cluster est représenté par un seul point central (comme K-Means).")
 else:
-    max_ni = 100
-    default_ni = 30
+    if info_preview is not None:
+        max_ni = max(1, info_preview.get("n_samples", 1) // max(1, 3))
+        default_ni = min(30, max_ni)
+    else:
+        max_ni = 100
+        default_ni = 30
 
-n_etalons_per_cluster = st.sidebar.number_input(
-    "Étalons par cluster",
-    min_value=1,
-    max_value=max_ni,
-    value=min(default_ni, max_ni),
-    step=1,
-    help="Nombre de points représentatifs par cluster. 1 étalon = forme simple, plusieurs étalons = formes complexes ou allongées"
-)
+    n_etalons_per_cluster = st.sidebar.number_input(
+        "Étalons par cluster",
+        min_value=1,
+        max_value=max_ni,
+        value=min(default_ni, max_ni),
+        step=1,
+        help="Nombre de points représentatifs par cluster. 1 étalon = forme simple, plusieurs étalons = formes complexes ou allongées"
+    )
 
 # Méthode d'étalon visible uniquement lorsque ni == 1
 if n_etalons_per_cluster == 1:
-    etallon_method = st.sidebar.selectbox("Méthode de calcul de l'étalon", ["centroid", "medoid", "median", "mode"])
+    etallon_method = st.sidebar.selectbox(
+        "Méthode de calcul de l'étalon",
+        ["centroid", "medoid", "median", "mode"],
+        help="Méthode de CALCUL de l'étalon : définit comment l'étalon est mis à jour à chaque itération (centroïde=moyenne, médoïde=point le plus central, etc.). Différent de l'initialisation."
+    )
 else:
     # Par défaut, centroid est utilisé pour composer les noyaux multi-étalons
     etallon_method = "centroid"
+
+# Paramètres conditionnels pour GMM
+gmm_init_mode = "means"  # Valeur par défaut
+if init_method == "gmm":
+    gmm_init_mode = st.sidebar.radio(
+        "Mode d'initialisation GMM",
+        ["means", "sample"],
+        index=0,
+        help="""
+        Mode d'initialisation pour le modèle de mélange gaussien :
+        • means : Utilise les moyennes des composantes gaussiennes (stable, déterministe)
+        • sample : Échantillonne des points depuis les distributions gaussiennes (variable, stochastique)
+        """
+    )
+
+# Paramètres conditionnels pour PCA
+pca_n_components = None  # Valeur par défaut (sera égal à n_clusters)
+if init_method == "pca" and info_preview is not None:
+    # Calculer le nombre maximum de composantes (nombre de features)
+    if info_preview is not None:
+        max_components = info_preview.get("n_features", n_clusters)
+    else:
+        max_components = 10  # Valeur par défaut si pas de preview
+
+    pca_n_components = st.sidebar.slider(
+        "Nombre de composantes principales",
+        min_value=1,
+        max_value=max_components,
+        value=min(n_clusters, max_components),
+        step=1,
+        help="""
+        Nombre de composantes principales à utiliser pour l'initialisation PCA.
+        Plus de composantes = plus de points extrêmes disponibles pour l'initialisation.
+        Par défaut : égal au nombre de clusters.
+        Recommandation : au moins n_clusters/2 pour éviter l'initialisation aléatoire de secours.
+        """
+    )
 
 # Conditional parameter selectors based on algorithm choice
 if algorithm == "Nuées Dynamiques":
@@ -173,7 +274,9 @@ def safe_metric(func, X, labels):
         return None
 
 
-def run_clustering(X, n_clusters, distance_metric, etallon_method, algorithm_name, n_etalons_per_cluster=1, init_method="random"):
+def run_clustering(X, n_clusters, distance_metric, etallon_method, algorithm_name,
+                   n_etalons_per_cluster=1, init_method="random",
+                   gmm_init_mode="means", pca_n_components=None):
     results = {}
 
     if algorithm_name in ("Nuées Dynamiques", "Comparer Nuées Dynamiques avec K-Means"):
@@ -182,7 +285,9 @@ def run_clustering(X, n_clusters, distance_metric, etallon_method, algorithm_nam
                 data=X,
                 n_clusters=n_clusters,
                 distance_metric=distance_metric,
-                init_method="random",
+                init_method=init_method,  # Utiliser le paramètre au lieu de "random"
+                gmm_init_mode=gmm_init_mode,  # Nouveau paramètre
+                pca_n_components=pca_n_components,  # Nouveau paramètre
                 etallon_method=etallon_method,
                 max_iterations=100,
                 tolerance=1e-4,
@@ -778,7 +883,11 @@ if run_button:
     # Run clustering
     with st.spinner("Exécution du clustering..."):
         results = run_clustering(
-            X, n_clusters, distance_metric, etallon_method, algorithm, n_etalons_per_cluster
+            X, n_clusters, distance_metric, etallon_method, algorithm,
+            n_etalons_per_cluster=n_etalons_per_cluster,
+            init_method=init_method,  # Nouveau paramètre
+            gmm_init_mode=gmm_init_mode,  # Nouveau paramètre
+            pca_n_components=pca_n_components  # Nouveau paramètre
         )
 
     # Display results

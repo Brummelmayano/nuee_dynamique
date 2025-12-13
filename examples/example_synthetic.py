@@ -6,10 +6,11 @@ Ce script démontre l'utilisation de la classe NuéesDynamique sur des données 
 et comparaison avec l'algorithme K-means de scikit-learn.
 
 Les exemples illustrent :
-- Initialisation (random vs kmeans++)
+- Quatre méthodes d'initialisation : centroïde unique (kmeans++), ensemble aléatoire (random), distribution probabiliste (GMM), axes factoriels (PCA)
 - Méthodes d'étalons (centroïde vs médoïde)
 - Différentes métriques de distance
 - Évaluation quantitative de la qualité du clustering
+- Noyaux multi-étalons (Diday IV.1) pour clusters complexes
 """
 
 import numpy as np
@@ -296,11 +297,12 @@ def example_multinoyau_diday():
     print(f"  - Clusters étirés pour montrer l'intérêt des noyaux multi-étalons")
 
     # --- MODÈLE 1 : ni = 1 (prototype unique) ---
+    # Correspond au mode "Centroïde unique (similaire KMeans)" dans l'interface Streamlit
     nd_single = NuéesDynamique(
         data=X,
         n_clusters=2,
         distance_metric='euclidean',
-        init_method='kmeans++',
+        init_method='kmeans++',  # "Centroïde unique (similaire KMeans)"
         etallon_method='centroid',
         n_etalons_per_cluster=1,  # Prototype unique
         random_state=0,
@@ -401,6 +403,244 @@ def example_multinoyau_diday():
     print(f"  - Cette distribution capture mieux la structure géométrique des clusters")
     print(f"  - C'est exactement le phénomène décrit par Diday (1971, IV.1) : les noyaux multi-étalons")
     print(f"    permettent une meilleure approximation de clusters non-sphériques.")
+
+
+def example_gmm_initialization():
+    """
+    Exemple : Initialisation par modèle de mélange gaussien (GMM).
+
+    Cet exemple démontre l'utilisation de init_method='gmm' qui correspond
+    au mode "Distribution probabiliste (GMM)" dans l'interface Streamlit.
+    Cette méthode est particulièrement adaptée aux clusters elliptiques.
+    """
+    print("\n" + "=" * 70)
+    print("EXEMPLE : INITIALISATION GMM - DISTRIBUTION PROBABILISTE")
+    print("=" * 70)
+
+    # Génération de données avec clusters elliptiques
+    X, y_true = generate_synthetic_data(
+        n_samples=300,
+        n_features=2,
+        n_clusters=3,
+        cluster_std=1.5,
+        random_state=42,
+    )
+
+    # Appliquer une transformation pour créer des clusters elliptiques
+    from sklearn.preprocessing import StandardScaler
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    # Transformation affine pour créer des ellipses
+    transform = np.array([[2.0, 0.5], [0.5, 0.8]])
+    X_elliptical = X_scaled @ transform
+
+    print(f"\n✓ Données générées : {X_elliptical.shape[0]} échantillons, {X_elliptical.shape[1]} features")
+    print(f"  - Clusters elliptiques (covariance non-sphérique)")
+
+    # Clustering avec initialisation GMM
+    nd_gmm = NuéesDynamique(
+        data=X_elliptical,
+        n_clusters=3,
+        distance_metric="euclidean",
+        init_method="gmm",  # Correspond à "Distribution probabiliste (GMM)"
+        gmm_init_mode="means",  # Utilise les moyennes des gaussiennes
+        etallon_method="centroid",
+        random_state=42,
+    )
+    nd_gmm.fit()
+
+    print(f"\n✓ Clustering avec init_method='gmm' (Distribution probabiliste)")
+    print(f"  - Itérations : {nd_gmm.n_iter_}")
+    print(f"  - Inertie : {nd_gmm.get_inertia():.2f}")
+    print(f"  - Silhouette : {compute_silhouette(X_elliptical, nd_gmm.labels_):.3f}")
+    print(f"  - Davies-Bouldin : {compute_davies_bouldin(X_elliptical, nd_gmm.labels_):.3f}")
+
+    # Comparaison avec kmeans++
+    nd_kmeans = NuéesDynamique(
+        data=X_elliptical,
+        n_clusters=3,
+        distance_metric="euclidean",
+        init_method="kmeans++",  # Centroïde unique
+        etallon_method="centroid",
+        random_state=42,
+    )
+    nd_kmeans.fit()
+
+    print(f"\n✓ Comparaison avec init_method='kmeans++' (Centroïde unique)")
+    print(f"  - Itérations : {nd_kmeans.n_iter_}")
+    print(f"  - Inertie : {nd_kmeans.get_inertia():.2f}")
+    print(f"  - Silhouette : {compute_silhouette(X_elliptical, nd_kmeans.labels_):.3f}")
+    print(f"  - Davies-Bouldin : {compute_davies_bouldin(X_elliptical, nd_kmeans.labels_):.3f}")
+
+    # Visualisation
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    # GMM
+    ax = axes[0]
+    scatter = ax.scatter(X_elliptical[:, 0], X_elliptical[:, 1], c=nd_gmm.labels_, cmap="viridis", alpha=0.6, s=50)
+    ax.scatter(
+        nd_gmm.etallons_[:, 0],
+        nd_gmm.etallons_[:, 1],
+        c="red",
+        marker="X",
+        s=200,
+        edgecolors="black",
+        linewidths=2,
+        label="Étalons GMM",
+    )
+    ax.set_title("Initialisation GMM\n(Distribution probabiliste)")
+    ax.set_xlabel("Feature 1")
+    ax.set_ylabel("Feature 2")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # K-means++
+    ax = axes[1]
+    scatter = ax.scatter(X_elliptical[:, 0], X_elliptical[:, 1], c=nd_kmeans.labels_, cmap="viridis", alpha=0.6, s=50)
+    ax.scatter(
+        nd_kmeans.etallons_[:, 0],
+        nd_kmeans.etallons_[:, 1],
+        c="red",
+        marker="X",
+        s=200,
+        edgecolors="black",
+        linewidths=2,
+        label="Étalons K-means++",
+    )
+    ax.set_title("Initialisation K-means++\n(Centroïde unique)")
+    ax.set_xlabel("Feature 1")
+    ax.set_ylabel("Feature 2")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    fig.suptitle("Comparaison : Initialisation GMM vs K-means++ sur clusters elliptiques", fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    plt.show()
+
+    print(f"\n✓ Observations :")
+    print(f"  - Les données ont des clusters elliptiques (covariance anisotrope)")
+    print(f"  - L'initialisation GMM capture mieux la structure probabiliste des données")
+    print(f"  - Cela correspond au mode 'Distribution probabiliste (GMM)' dans l'interface Streamlit")
+
+
+def example_pca_initialization():
+    """
+    Exemple : Initialisation par axes factoriels (ACP).
+
+    Cet exemple démontre l'utilisation de init_method='pca' qui correspond
+    au mode "Axes factoriels (ACP)" dans l'interface Streamlit.
+    Cette méthode est déterministe et exploite la variance maximale.
+    """
+    print("\n" + "=" * 70)
+    print("EXEMPLE : INITIALISATION PCA - AXES FACTORIELS")
+    print("=" * 70)
+
+    # Génération de données avec structure linéaire
+    X, y_true = generate_synthetic_data(
+        n_samples=300,
+        n_features=4,  # Données en haute dimension
+        n_clusters=3,
+        cluster_std=1.0,
+        random_state=42,
+    )
+
+    print(f"\n✓ Données générées : {X.shape[0]} échantillons, {X.shape[1]} features")
+    print(f"  - Données 4D avec structure sous-jacente")
+
+    # Clustering avec initialisation PCA
+    nd_pca = NuéesDynamique(
+        data=X,
+        n_clusters=3,
+        distance_metric="euclidean",
+        init_method="pca",  # Correspond à "Axes factoriels (ACP)"
+        pca_n_components=2,  # Utiliser 2 composantes principales
+        etallon_method="centroid",
+        random_state=42,
+    )
+    nd_pca.fit()
+
+    print(f"\n✓ Clustering avec init_method='pca' (Axes factoriels)")
+    print(f"  - Composantes PCA utilisées : 2")
+    print(f"  - Itérations : {nd_pca.n_iter_}")
+    print(f"  - Inertie : {nd_pca.get_inertia():.2f}")
+    print(f"  - Silhouette : {compute_silhouette(X, nd_pca.labels_):.3f}")
+    print(f"  - Davies-Bouldin : {compute_davies_bouldin(X, nd_pca.labels_):.3f}")
+
+    # Comparaison avec random
+    nd_random = NuéesDynamique(
+        data=X,
+        n_clusters=3,
+        distance_metric="euclidean",
+        init_method="random",  # Ensemble de points aléatoires
+        etallon_method="centroid",
+        random_state=42,
+    )
+    nd_random.fit()
+
+    print(f"\n✓ Comparaison avec init_method='random' (Ensemble aléatoire)")
+    print(f"  - Itérations : {nd_random.n_iter_}")
+    print(f"  - Inertie : {nd_random.get_inertia():.2f}")
+    print(f"  - Silhouette : {compute_silhouette(X, nd_random.labels_):.3f}")
+    print(f"  - Davies-Bouldin : {compute_davies_bouldin(X, nd_random.labels_):.3f}")
+
+    # Visualisation en 2D (projection PCA)
+    from sklearn.decomposition import PCA
+    pca_viz = PCA(n_components=2)
+    X_pca = pca_viz.fit_transform(X)
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    # PCA
+    ax = axes[0]
+    scatter = ax.scatter(X_pca[:, 0], X_pca[:, 1], c=nd_pca.labels_, cmap="viridis", alpha=0.6, s=50)
+    # Projeter les étalons dans l'espace PCA pour la visualisation
+    etallons_pca = pca_viz.transform(nd_pca.etallons_)
+    ax.scatter(
+        etallons_pca[:, 0],
+        etallons_pca[:, 1],
+        c="red",
+        marker="X",
+        s=200,
+        edgecolors="black",
+        linewidths=2,
+        label="Étalons PCA",
+    )
+    ax.set_title("Initialisation PCA\n(Axes factoriels)")
+    ax.set_xlabel("PC1")
+    ax.set_ylabel("PC2")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # Random
+    ax = axes[1]
+    scatter = ax.scatter(X_pca[:, 0], X_pca[:, 1], c=nd_random.labels_, cmap="viridis", alpha=0.6, s=50)
+    etallons_random_pca = pca_viz.transform(nd_random.etallons_)
+    ax.scatter(
+        etallons_random_pca[:, 0],
+        etallons_random_pca[:, 1],
+        c="red",
+        marker="X",
+        s=200,
+        edgecolors="black",
+        linewidths=2,
+        label="Étalons aléatoires",
+    )
+    ax.set_title("Initialisation aléatoire\n(Ensemble de points)")
+    ax.set_xlabel("PC1")
+    ax.set_ylabel("PC2")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    fig.suptitle("Comparaison : Initialisation PCA vs Aléatoire sur données 4D", fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    plt.show()
+
+    print(f"\n✓ Observations :")
+    print(f"  - Les données sont en 4D, visualisation en 2D via PCA")
+    print(f"  - L'initialisation PCA exploite la structure linéaire des données")
+    print(f"  - Méthode déterministe : résultats reproductibles")
+    print(f"  - Cela correspond au mode 'Axes factoriels (ACP)' dans l'interface Streamlit")
 
 
 def example_synthetic_multinoyau_3d():
@@ -550,12 +790,14 @@ if __name__ == "__main__":
     print("Données synthétiques avec visualisations et comparaison K-means")
     print("=" * 70)
 
-    # Exécuter les trois exemples
+    # Exécuter les exemples
     example_2d_clustering()
     example_3d_clustering()
     comparison_with_kmeans()
-    example_multinoyau_diday()  # Nouvel exemple
-    example_synthetic_multinoyau_3d()  # Nouvel exemple 3D multi-noyau
+    example_multinoyau_diday()  # Noyaux multi-étalons
+    example_gmm_initialization()  # Initialisation GMM
+    example_pca_initialization()  # Initialisation PCA
+    example_synthetic_multinoyau_3d()  # Multi-noyau 3D
 
     print("\n" + "=" * 70)
     print("Démonstration terminée !")
